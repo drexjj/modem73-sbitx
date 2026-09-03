@@ -37,6 +37,9 @@
 #ifndef PER_TONE_PRECISION
 #define PER_TONE_PRECISION 1
 #endif
+#ifndef OFDM_LLR_GAIN
+#define OFDM_LLR_GAIN 1
+#endif
 #ifndef PILOT_QUALITY_GATE
 #define PILOT_QUALITY_GATE 0.35
 #endif
@@ -1096,7 +1099,7 @@ private:
         int k = 0;
         for (int i = 0; i < tone_count; ++i) {
             if (i % block_length != seed_off) {
-                demap_soft(perm + k, demod[i], precision, 1);
+                demap_soft(perm + k, demod[i], precision * value(OFDM_LLR_GAIN), 1);
                 k += 1;
             }
         }
@@ -1464,7 +1467,7 @@ private:
                 value prec = precision;
                 if (PER_TONE_PRECISION && chan_pwr_mean > 0)
                     prec = std::min(precision * norm(chan[i]) / chan_pwr_mean, value(1023));
-                demap_soft(perm + k_, demod[i], prec, bits);
+                demap_soft(perm + k_, demod[i], prec * value(OFDM_LLR_GAIN), bits);
                 k_ += bits;
             }
         }
@@ -1582,7 +1585,7 @@ private:
                     value prec = precision;
                     if (PER_TONE_PRECISION && chan_pwr_mean > 0)
                         prec = std::min(precision * norm(chan2[i]) / chan_pwr_mean, value(1023));
-                    demap_soft(perm + l, dem[i], prec, bits);
+                    demap_soft(perm + l, dem[i], prec * value(OFDM_LLR_GAIN), bits);
                     l += bits;
                 }
             }

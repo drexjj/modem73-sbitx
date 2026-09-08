@@ -146,6 +146,7 @@ private:
         FIELD_AUDIO_OUTPUT,
         FIELD_TX_LEVEL,
         FIELD_PTT_TYPE,
+        FIELD_HAMLIB_INFO,
         FIELD_VOX_FREQ,
         FIELD_VOX_LEAD,
         FIELD_VOX_TAIL,
@@ -179,10 +180,24 @@ private:
         RIG_FIELD_COUNT
     };
 
-    bool rig_ui() const {
+    bool hamlib_info_field() const {
 #ifdef WITH_HAMLIB
-        if (state_.ptt_type_index == 5) return true;
+        return state_.ptt_type_index != 5 && state_.ptt_type_index != 1;
+#else
+        return false;
 #endif
+    }
+
+    bool hamlib_fields() const {
+#ifdef WITH_HAMLIB
+        return state_.ptt_type_index == 5 || (state_.hamlib_info && hamlib_info_field());
+#else
+        return false;
+#endif
+    }
+
+    bool rig_ui() const {
+        if (hamlib_fields()) return true;
         return state_.ptt_type_index == 1;
     }
 
@@ -1032,10 +1047,11 @@ private:
                 return true;
             }
         }
-        if (state_.ptt_type_index != 5) {
+        if (!hamlib_fields()) {
             if (field == FIELD_HAMLIB_MODEL || field == FIELD_HAMLIB_DEVICE || field == FIELD_HAMLIB_BAUD)
                 return true;
         }
+        if (field == FIELD_HAMLIB_INFO && !hamlib_info_field()) return true;
 #ifdef WITH_CM108
         if (state_.ptt_type_index != 4) {  // not CM108
             if (field == FIELD_CM108_GPIO || field == FIELD_CM108_DEVICE) {
@@ -1172,6 +1188,10 @@ private:
         row++;
         if (field == FIELD_PTT_TYPE) return row;
         row++;
+        if (hamlib_info_field()) {
+            if (field == FIELD_HAMLIB_INFO) return row;
+            row++;
+        }
         if (state_.ptt_type_index == 2) {
             if (field == FIELD_VOX_FREQ) return row;
             row++;
@@ -1188,7 +1208,7 @@ private:
             if (field == FIELD_COM_INVERT) return row;
             row++;
         }
-        if (state_.ptt_type_index == 5) {
+        if (hamlib_fields()) {
             if (field == FIELD_HAMLIB_MODEL) return row;
             row++;
             if (field == FIELD_HAMLIB_DEVICE) return row;
@@ -1385,6 +1405,11 @@ private:
             case FIELD_AUDIO_OUTPUT:
                 break;
             case FIELD_PTT_TYPE:
+                break;
+            case FIELD_HAMLIB_INFO:
+                state_.hamlib_info = !state_.hamlib_info;
+                state_.add_log(state_.hamlib_info ? "Rig info via Hamlib (restart to apply)"
+                                                  : "Rig info disabled (restart to apply)");
                 break;
             case FIELD_VOX_FREQ:
                 state_.vox_tone_freq += delta * 100;
@@ -3457,7 +3482,8 @@ private:
             draw_field(dy, c1, c2, "PTT", FIELD_PTT_TYPE,
                        PTT_TYPE_OPTIONS[state_.ptt_type_index], true);
             bool ptt_err = state_.ptt_failed.load() ||
-                           (rig_ui() && !state_.rigctl_connected.load());
+                           ((state_.ptt_type_index == 1 || state_.ptt_type_index == 5) &&
+                            !state_.rigctl_connected.load());
             if (ptt_err) {
                 if (current_field_ != FIELD_PTT_TYPE) {
                     attron(COLOR_PAIR(2) | A_BOLD);
@@ -3470,6 +3496,12 @@ private:
             }
         }
         row++;
+        if (hamlib_info_field()) {
+            dy = visible_y(row);
+            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Info", FIELD_HAMLIB_INFO,
+                                             state_.hamlib_info ? "HAMLIB" : "NONE");
+            row++;
+        }
         
         if (state_.ptt_type_index == 2) {  // VOX
             dy = visible_y(row);
@@ -3529,7 +3561,7 @@ private:
             }
             row++;
         }
-        if (state_.ptt_type_index == 5) {
+        if (hamlib_fields()) {
             dy = visible_y(row);
             if (dy >= 0) {
                 std::string m = state_.hamlib_model > 0 ? hamlib_model_label(state_.hamlib_model) : "select";

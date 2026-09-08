@@ -95,6 +95,7 @@ struct TNCConfig {
     int hamlib_model = 0;
     std::string hamlib_device;
     int hamlib_baud = 0;
+    bool hamlib_info = false;
     std::string rigctl_host = "localhost";
     int rigctl_port = 4532;
     

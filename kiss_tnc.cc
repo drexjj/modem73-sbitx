@@ -51,6 +51,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
         else if (!strcmp(key, "hamlib_model") && take(key)) config.hamlib_model = atoi(value);
         else if (!strcmp(key, "hamlib_device") && take(key)) config.hamlib_device = value;
         else if (!strcmp(key, "hamlib_baud") && take(key)) config.hamlib_baud = atoi(value);
+        else if (!strcmp(key, "hamlib_info") && take(key)) config.hamlib_info = atoi(value) != 0;
         else if (!strcmp(key, "modulation") && take(key)) {
             int idx = atoi(value);
             if (idx >= 0 && idx < N_MOD) config.modulation = MOD_OPTS[idx];
@@ -257,6 +258,7 @@ void print_help(const char* prog) {
               << "      --hamlib-model N    Hamlib rig model number for HAMLIB PTT\n"
               << "      --hamlib-device DEV Serial port or host:port for HAMLIB PTT\n"
               << "      --hamlib-baud BAUD  Serial speed for HAMLIB PTT (0 = rig default)\n"
+              << "      --hamlib-info       Rig status via Hamlib while PTT uses another type\n"
 #endif
               << "      --com-line LINE     COM PTT line: dtr, rts, both, -dtr, -rts, -both\n"
               << "                          (prefix '-' inverts polarity; default: rts)\n"
@@ -486,6 +488,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--hamlib-baud" && i + 1 < argc) {
             config.hamlib_baud = atoi(argv[++i]);
             cli_set.insert("hamlib_baud");
+        } else if (arg == "--hamlib-info") {
+            config.hamlib_info = true;
+            cli_set.insert("hamlib_info");
         } else if (arg == "--com-port" && i + 1 < argc) {
             config.com_port = argv[++i];
             cli_set.insert("com_port");
@@ -863,6 +868,8 @@ int main(int argc, char** argv) {
                     config.hamlib_device = ui_state.hamlib_device;
                 if (!cli_set.count("hamlib_baud"))
                     config.hamlib_baud = ui_state.hamlib_baud;
+                if (!cli_set.count("hamlib_info"))
+                    config.hamlib_info = ui_state.hamlib_info;
                 if (!cli_set.count("com_ptt_line"))
                     config.com_ptt_line = ui_state.com_ptt_line;
                 if (!cli_set.count("com_invert_dtr"))
@@ -949,6 +956,7 @@ int main(int argc, char** argv) {
                 ui_state.hamlib_model = config.hamlib_model;
                 ui_state.hamlib_device = config.hamlib_device;
                 ui_state.hamlib_baud = config.hamlib_baud;
+        ui_state.hamlib_info = config.hamlib_info;
                 ui_state.com_ptt_line = config.com_ptt_line;
                 ui_state.com_invert_dtr = config.com_invert_dtr;
                 ui_state.com_invert_rts = config.com_invert_rts;
@@ -1008,6 +1016,7 @@ int main(int argc, char** argv) {
         ui_state.hamlib_model = config.hamlib_model;
         ui_state.hamlib_device = config.hamlib_device;
         ui_state.hamlib_baud = config.hamlib_baud;
+        ui_state.hamlib_info = config.hamlib_info;
         ui_state.com_ptt_line = config.com_ptt_line;
         ui_state.com_invert_dtr = config.com_invert_dtr;
         ui_state.com_invert_rts = config.com_invert_rts;
@@ -1454,6 +1463,7 @@ int main(int argc, char** argv) {
                 new_config.hamlib_model = state.hamlib_model;
                 new_config.hamlib_device = state.hamlib_device;
                 new_config.hamlib_baud = state.hamlib_baud;
+                new_config.hamlib_info = state.hamlib_info;
                 new_config.com_ptt_line = state.com_ptt_line;
                 new_config.com_invert_dtr = state.com_invert_dtr;
                 new_config.com_invert_rts = state.com_invert_rts;

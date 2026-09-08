@@ -342,6 +342,16 @@ public:
             dummy_ptt_ = std::make_unique<DummyPTT>();
             dummy_ptt_->connect();
         }
+#ifdef WITH_HAMLIB
+        if (config_.hamlib_info && !hamlib_ptt_ && config_.ptt_type != PTTType::RIGCTL) {
+            hamlib_info_ = std::make_unique<HamlibPTT>();
+            std::string err;
+            if (!hamlib_info_->open(config_.hamlib_model, config_.hamlib_device, config_.hamlib_baud, err))
+                ui_log("(!) Hamlib rig info: " + err);
+            else
+                ui_log("Hamlib: rig info from model " + std::to_string(config_.hamlib_model) + " on " + config_.hamlib_device);
+        }
+#endif
         
         server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd_ < 0) {
@@ -2042,6 +2052,8 @@ private:
     std::unique_ptr<RigctlPTT> rigctl_;
 #ifdef WITH_HAMLIB
     std::unique_ptr<HamlibPTT> hamlib_ptt_;
+    std::unique_ptr<HamlibPTT> hamlib_info_;
+    HamlibPTT* hamlib_rig() const { return hamlib_ptt_ ? hamlib_ptt_.get() : hamlib_info_.get(); }
 #endif
     std::unique_ptr<SerialPTT> serial_ptt_;
 #ifdef WITH_CM108
@@ -2498,7 +2510,7 @@ public:
     std::string rigctl_command(const std::string& cmd) {
         if (rigctl_) return rigctl_->send_command(cmd);
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->command(cmd);
+        if (hamlib_rig()) return hamlib_rig()->command(cmd);
 #endif
         return "ERR: rigctl not enabled";
     }
@@ -2506,14 +2518,14 @@ public:
     bool is_rigctl_connected() const {
         if (rigctl_) return rigctl_->is_connected();
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->is_connected();
+        if (hamlib_rig()) return hamlib_rig()->is_connected();
 #endif
         return false;
     }
 
     bool hamlib_get_freq(double& hz) {
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->get_freq(hz);
+        if (hamlib_rig()) return hamlib_rig()->get_freq(hz);
 #endif
         (void)hz;
         return false;

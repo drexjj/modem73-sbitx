@@ -12,7 +12,11 @@
 #include <cstring>
 #include <iostream>
 
+#if __has_include(<hidapi.h>)
+#include <hidapi.h>
+#else
 #include <hidapi/hidapi.h>
+#endif
 
 class CM108PTT {
 public:

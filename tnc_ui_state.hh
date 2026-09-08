@@ -246,6 +246,9 @@ struct TNCUIState {
     int com_ptt_line = 1;       // 0=DTR, 1=RTS, 2=BOTH
     bool com_invert_dtr = false;
     bool com_invert_rts = false;
+    std::string gpio_chip = "gpiochip0";
+    int gpio_line = 17;
+    bool gpio_active_low = false;
     
 #ifdef WITH_CM108
     // CM108 PTT settings (PTT type 4)
@@ -776,6 +779,9 @@ struct TNCUIState {
         fprintf(f, "com_ptt_line=%d\n", com_ptt_line);
         fprintf(f, "com_invert_dtr=%d\n", com_invert_dtr ? 1 : 0);
         fprintf(f, "com_invert_rts=%d\n", com_invert_rts ? 1 : 0);
+        fprintf(f, "gpio_chip=%s\n", gpio_chip.c_str());
+        fprintf(f, "gpio_line=%d\n", gpio_line);
+        fprintf(f, "gpio_active_low=%d\n", gpio_active_low ? 1 : 0);
 #ifdef WITH_CM108
         fprintf(f, "# CM108 PTT\n");
         fprintf(f, "cm108_gpio=%d\n", cm108_gpio);
@@ -913,6 +919,12 @@ struct TNCUIState {
                 }
                 else if (strcmp(key, "com_invert_dtr") == 0) com_invert_dtr = atoi(value) != 0;
                 else if (strcmp(key, "com_invert_rts") == 0) com_invert_rts = atoi(value) != 0;
+                else if (strcmp(key, "gpio_chip") == 0) gpio_chip = value;
+                else if (strcmp(key, "gpio_line") == 0) {
+                    int v = atoi(value);
+                    if (v >= 0 && v < 512) gpio_line = v;
+                }
+                else if (strcmp(key, "gpio_active_low") == 0) gpio_active_low = atoi(value) != 0;
 #ifdef WITH_CM108
                 else if (strcmp(key, "cm108_gpio") == 0) {
                     int v = atoi(value);

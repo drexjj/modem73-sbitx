@@ -641,6 +641,7 @@ public:
             return false;
         const cmplx* base = frame_raw_.data() + start;
         cmplx dm[seed_tones];
+        DSP::TheilSenEstimator<value, seed_tones> candidate_tse;
         auto eval = [&](int c) -> value {
             DSP::Phasor<cmplx> o2;
             o2.omega(-cfo_rad);
@@ -663,11 +664,11 @@ public:
                 index[k] = tone_off_const + block_length * k + seed_off;
                 phase[k] = arg(dm[k]);
             }
-            tse.compute(index, phase, seed_tones);
+            candidate_tse.compute(index, phase, seed_tones);
             cmplx acc(0, 0);
             value mag = 0;
             for (int k = 0; k < seed_tones; ++k) {
-                cmplx d = dm[k] * DSP::polar<value>(1, -tse(index[k]));
+                cmplx d = dm[k] * DSP::polar<value>(1, -candidate_tse(index[k]));
                 acc += d;
                 mag += abs(d);
             }

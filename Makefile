@@ -103,6 +103,12 @@ ifneq ($(HIDAPI_LIBS),)
 		echo "Note: Run 'sudo cp misc/50-cm108-ptt.rules /etc/udev/rules.d/' for CM108 udev rules"; \
 	fi
 endif
+ifneq ($(UNAME_S),Darwin)
+	@if [ -f misc/60-gpio-ptt.rules ]; then \
+		cp misc/60-gpio-ptt.rules /etc/udev/rules.d/ 2>/dev/null || \
+		echo "Note: Run 'sudo cp misc/60-gpio-ptt.rules /etc/udev/rules.d/' for GPIO PTT udev rules"; \
+	fi
+endif
 
 # Debug build
 debug: CXXFLAGS = -std=c++17 -g -O0 -Wall -Wextra -DDEBUG

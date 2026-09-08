@@ -629,6 +629,8 @@ public:
                     cand_deadline_ = -1;
                     int64_t s_fp = frame_pos_, s_au = anchor_u_, s_pp = peak_pos_;
                     int64_t s_ta = trail_anchor_;
+                    int s_off[RobustParams::NROWS_MAX + 2];
+                    std::memcpy(s_off, row_off_, sizeof(s_off));
                     value s_om = omega_;
                     int s_bu = base_use_, s_rd = rows_done_;
                     unsigned s_tm = tried_mask_;
@@ -642,6 +644,8 @@ public:
                                   << ": collect preempted (q=" << lock_q_
                                   << " over " << locked_q_
                                   << (stale ? ", stale" : "") << ")" << std::endl;
+                        int n_off[RobustParams::NROWS_MAX + 2];
+                        std::memcpy(n_off, row_off_, sizeof(n_off));
                         bool rescued = false;
                         if (s_ta >= 0) {
                             int64_t n_fp = frame_pos_, n_au = anchor_u_;
@@ -661,6 +665,7 @@ public:
                             frame_pos_ = s_fp;
                             omega_ = s_om;
                             base_use_ = s_bu;
+                            std::memcpy(row_off_, s_off, sizeof(s_off));
                             for (int i = 0; i < s_rd; ++i) {
                                 int64_t st = row_start(i);
                                 if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
@@ -694,6 +699,7 @@ public:
                             base_use_ = n_bu;
 #endif
                         }
+                        std::memcpy(row_off_, n_off, sizeof(n_off));
                         if (rescued)
                             ++stats_rescues;
                         else
@@ -708,6 +714,7 @@ public:
                         trail_anchor_ = anchor_u_;
                         trail_omega_ = omega_;
                     }
+                    std::memcpy(row_off_, s_off, sizeof(s_off));
                     frame_pos_ = s_fp; anchor_u_ = s_au; peak_pos_ = s_pp;
                     omega_ = s_om; base_use_ = s_bu;
                     rows_done_ = s_rd; tried_mask_ = s_tm;
@@ -1363,7 +1370,6 @@ private:
         using namespace robust_detail;
         if (!seq_init_)
             init_seqs();
-        clear_row_off();
         frame_pos_ = peak_pos_ + 1;
         int64_t p2u = peak_pos_ - RobustParams::NFFT + 1;
         if (p2u - D - RobustParams::CP < 0)
@@ -1428,6 +1434,7 @@ private:
                   << (double)total_in_ / RobustParams::SAMPLE_RATE << "s"
                   << std::endl;
         if (best_kind == 1) {
+            clear_row_off();
             frame_pos_ = p2u + D;
             rows_done_ = 0;
             tried_mask_ = 0;
@@ -1836,6 +1843,8 @@ private:
 
     bool rescue_backward(FrameCallback callback, bool consume = true) {
         int64_t s_fp = frame_pos_;
+        int s_off[RobustParams::NROWS_MAX + 2];
+        std::memcpy(s_off, row_off_, sizeof(s_off));
         clear_row_off();
         for (int mi = 0; mi < nmodes_; ++mi) {
             RobustMode m = modes_[mi];
@@ -1891,11 +1900,14 @@ private:
                         buf_.clear();
                     rows_done_ = 0;
                     refresh_sums((int64_t)buf_.size() - 1);
+                } else {
+                    std::memcpy(row_off_, s_off, sizeof(s_off));
                 }
                 return true;
             }
         }
         frame_pos_ = s_fp;
+        std::memcpy(row_off_, s_off, sizeof(s_off));
         for (int i = 0; i < rows_done_; ++i) {
             int64_t st = row_start(i);
             if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
@@ -1953,7 +1965,7 @@ private:
 #if RDM_TIMING_TRACK
         auto rezero = [&](const bool* keep, int bl) {
             for (int i = 0; i < nrows; ++i)
-                if (zrow[i] && (!keep || !keep[std::min(i / bl, RobustParams::NROWS_MAX / 32 + 1)]))
+                if (zrow[i] && (!keep || !keep[std::min(i / bl, nrows / bl - 1)]))
                     for (int k = 0; k < nc_; ++k)
                         rows_[i][k] = cmplx(0, 0);
         };

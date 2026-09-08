@@ -128,6 +128,12 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
         }
         else if (!strcmp(key, "com_invert_dtr") && take(key)) config.com_invert_dtr = atoi(value) != 0;
         else if (!strcmp(key, "com_invert_rts") && take(key)) config.com_invert_rts = atoi(value) != 0;
+        else if (!strcmp(key, "gpio_chip") && take(key)) config.gpio_chip = value;
+        else if (!strcmp(key, "gpio_line") && take(key)) {
+            int v = atoi(value);
+            if (v >= 0 && v < 512) config.gpio_line = v;
+        }
+        else if (!strcmp(key, "gpio_active_low") && take(key)) config.gpio_active_low = atoi(value) != 0;
 #ifdef WITH_CM108
         else if (!strcmp(key, "cm108_gpio") && take(key)) config.cm108_gpio = atoi(value);
         else if (!strcmp(key, "cm108_device") && take(key)) config.cm108_device = value;
@@ -250,6 +256,9 @@ void print_help(const char* prog) {
 #ifdef WITH_HAMLIB
               << ", hamlib"
 #endif
+#ifdef WITH_GPIO_PTT
+              << ", gpio"
+#endif
               << " (default: none)\n"
               << "      --rigctl HOST:PORT  Rigctld address (default: localhost:4532,\n"
               << "                          implies --ptt rigctl)\n"
@@ -261,6 +270,11 @@ void print_help(const char* prog) {
               << "      --hamlib-info       Rig status via Hamlib while PTT uses another type\n"
 #endif
               << "      --com-line LINE     COM PTT line: dtr, rts, both, -dtr, -rts, -both\n"
+#ifdef WITH_GPIO_PTT
+              << "      --gpio-chip DEV     GPIO chip for GPIO PTT (default: gpiochip0)\n"
+              << "      --gpio-line N       GPIO line offset for GPIO PTT (default: 17)\n"
+              << "      --gpio-active-low   Drive the GPIO PTT line active-low\n"
+#endif
               << "                          (prefix '-' inverts polarity; default: rts)\n"
               << "      --vox-freq HZ       VOX tone frequency (default: 1200)\n"
               << "      --vox-lead MS       VOX lead time in ms (default: 550)\n"
@@ -528,6 +542,15 @@ int main(int argc, char** argv) {
                 cli_set.insert("com_invert_dtr");
                 cli_set.insert("com_invert_rts");
             }
+        } else if (arg == "--gpio-chip" && i + 1 < argc) {
+            config.gpio_chip = argv[++i];
+            cli_set.insert("gpio_chip");
+        } else if (arg == "--gpio-line" && i + 1 < argc) {
+            config.gpio_line = atoi(argv[++i]);
+            cli_set.insert("gpio_line");
+        } else if (arg == "--gpio-active-low") {
+            config.gpio_active_low = true;
+            cli_set.insert("gpio_active_low");
         } else if (arg == "--ptt" && i + 1 < argc) {
             cli_set.insert("ptt_type");
             std::string ptt_type = argv[++i];
@@ -541,10 +564,16 @@ int main(int argc, char** argv) {
 #ifdef WITH_HAMLIB
             else if (ptt_type == "hamlib") config.ptt_type = PTTType::HAMLIB;
 #endif
+#ifdef WITH_GPIO_PTT
+            else if (ptt_type == "gpio") config.ptt_type = PTTType::GPIO;
+#endif
             else {
                 std::cerr << "Unknown PTT type: " << ptt_type << " (use none, rigctl, vox, com"
 #ifdef WITH_CM108
                           << ", cm108"
+#endif
+#ifdef WITH_GPIO_PTT
+                          << ", gpio"
 #endif
 #ifdef WITH_HAMLIB
                           << ", hamlib"
@@ -876,6 +905,12 @@ int main(int argc, char** argv) {
                     config.com_invert_dtr = ui_state.com_invert_dtr;
                 if (!cli_set.count("com_invert_rts"))
                     config.com_invert_rts = ui_state.com_invert_rts;
+                if (!cli_set.count("gpio_chip"))
+                    config.gpio_chip = ui_state.gpio_chip;
+                if (!cli_set.count("gpio_line"))
+                    config.gpio_line = ui_state.gpio_line;
+                if (!cli_set.count("gpio_active_low"))
+                    config.gpio_active_low = ui_state.gpio_active_low;
 
 #ifdef WITH_CM108
                 // CM108 PTT settings
@@ -960,6 +995,9 @@ int main(int argc, char** argv) {
                 ui_state.com_ptt_line = config.com_ptt_line;
                 ui_state.com_invert_dtr = config.com_invert_dtr;
                 ui_state.com_invert_rts = config.com_invert_rts;
+                ui_state.gpio_chip = config.gpio_chip;
+                ui_state.gpio_line = config.gpio_line;
+                ui_state.gpio_active_low = config.gpio_active_low;
 #ifdef WITH_CM108
                 // CM108 PTT settings
                 ui_state.cm108_gpio = config.cm108_gpio;
@@ -1020,6 +1058,9 @@ int main(int argc, char** argv) {
         ui_state.com_ptt_line = config.com_ptt_line;
         ui_state.com_invert_dtr = config.com_invert_dtr;
         ui_state.com_invert_rts = config.com_invert_rts;
+        ui_state.gpio_chip = config.gpio_chip;
+        ui_state.gpio_line = config.gpio_line;
+        ui_state.gpio_active_low = config.gpio_active_low;
 #ifdef WITH_CM108
         ui_state.cm108_gpio = config.cm108_gpio;
         ui_state.cm108_device = config.cm108_device;
@@ -1467,6 +1508,9 @@ int main(int argc, char** argv) {
                 new_config.com_ptt_line = state.com_ptt_line;
                 new_config.com_invert_dtr = state.com_invert_dtr;
                 new_config.com_invert_rts = state.com_invert_rts;
+                new_config.gpio_chip = state.gpio_chip;
+                new_config.gpio_line = state.gpio_line;
+                new_config.gpio_active_low = state.gpio_active_low;
 
                 tnc.update_config(new_config);
                 if (ctrl) ctrl->notify_config_changed();

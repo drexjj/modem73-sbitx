@@ -71,6 +71,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
         else if (!strcmp(key, "mfsk_rx_enabled") && take(key)) config.mfsk_rx_enabled = atoi(value) != 0;
         else if (!strcmp(key, "ofdm_rx_enabled") && take(key)) config.ofdm_rx_enabled = atoi(value) != 0;
         else if (!strcmp(key, "robust_rx_enabled") && take(key)) config.robust_rx_enabled = atoi(value) != 0;
+        else if (!strcmp(key, "robust_enhanced_retry") && take(key)) config.robust_enhanced_retry = atoi(value) != 0;
         else if (!strcmp(key, "csma_enabled") && take(key)) config.csma_enabled = atoi(value) != 0;
         else if (!strcmp(key, "csma_sync_only") && take(key)) config.csma_sync_only = atoi(value) != 0;
         else if (!strcmp(key, "csma_fast_floor") && take(key)) config.csma_fast_floor = atoi(value) != 0;
@@ -236,6 +237,8 @@ void print_help(const char* prog) {
               << "      --no-postamble      Do not send a postamble (default)\n"
               << "      --mfsk-mode MODE    MFSK-8, MFSK-16, MFSK-32 or MFSK-32R\n"
               << "                          (implies --modem mfsk)\n"
+              << "      --robust-enhanced-retry     Enable extra ROBUST RX retries (more CPU)\n"
+              << "      --no-robust-enhanced-retry  Disable extra ROBUST RX retries (default)\n"
               << "      --robust-mode MODE  RDM-1200 RDM-800 RDM-600 RDM-300 RDMN-300 RDMN-150\n"
               << "                          suffix S selects short frames (e.g. RDM-600S),\n"
               << "                          RDM-QB is the 32 B micro burst\n"
@@ -613,6 +616,12 @@ int main(int argc, char** argv) {
         } else if (arg == "--no-ofdm-rx") {
             config.ofdm_rx_enabled = false;
             cli_set.insert("ofdm_rx_enabled");
+        } else if (arg == "--robust-enhanced-retry") {
+            config.robust_enhanced_retry = true;
+            cli_set.insert("robust_enhanced_retry");
+        } else if (arg == "--no-robust-enhanced-retry") {
+            config.robust_enhanced_retry = false;
+            cli_set.insert("robust_enhanced_retry");
         } else if (arg == "--no-robust-rx") {
             config.robust_rx_enabled = false;
             cli_set.insert("robust_rx_enabled");
@@ -844,6 +853,8 @@ int main(int argc, char** argv) {
                     config.ofdm_rx_enabled = ui_state.ofdm_rx_enabled;
                 if (!cli_set.count("robust_rx_enabled"))
                     config.robust_rx_enabled = ui_state.robust_rx_enabled;
+                if (!cli_set.count("robust_enhanced_retry"))
+                    config.robust_enhanced_retry = ui_state.robust_enhanced_retry;
                 if (!cli_set.count("mfsk_rx_enabled"))
                     config.mfsk_rx_enabled = ui_state.mfsk_rx_enabled;
                 bool devices_migrated = false;
@@ -971,6 +982,7 @@ int main(int argc, char** argv) {
                 ui_state.tx_blanking_enabled = config.tx_blanking_enabled;
                 ui_state.ofdm_rx_enabled = config.ofdm_rx_enabled;
                 ui_state.robust_rx_enabled = config.robust_rx_enabled;
+                ui_state.robust_enhanced_retry = config.robust_enhanced_retry;
                 ui_state.mfsk_rx_enabled = config.mfsk_rx_enabled;
                 // Audio devices
                 ui_state.audio_input_device = config.audio_input_device;
@@ -1114,6 +1126,7 @@ int main(int argc, char** argv) {
         ui_state.tx_blanking_enabled = config.tx_blanking_enabled;
         ui_state.ofdm_rx_enabled = config.ofdm_rx_enabled;
         ui_state.robust_rx_enabled = config.robust_rx_enabled;
+        ui_state.robust_enhanced_retry = config.robust_enhanced_retry;
         ui_state.mfsk_rx_enabled = config.mfsk_rx_enabled;
 
         ui_state.update_modem_info();
@@ -1303,6 +1316,7 @@ int main(int argc, char** argv) {
                 cJSON_AddBoolToObject(j, "mfsk_rx_enabled", cfg.mfsk_rx_enabled);
                 cJSON_AddBoolToObject(j, "ofdm_rx_enabled", cfg.ofdm_rx_enabled);
                 cJSON_AddBoolToObject(j, "robust_rx_enabled", cfg.robust_rx_enabled);
+                cJSON_AddBoolToObject(j, "robust_enhanced_retry", cfg.robust_enhanced_retry);
 
                 return j;
             };
@@ -1383,6 +1397,8 @@ int main(int argc, char** argv) {
                     new_config.ofdm_rx_enabled = cJSON_IsTrue(item);
                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "robust_rx_enabled")) && cJSON_IsBool(item))
                     new_config.robust_rx_enabled = cJSON_IsTrue(item);
+                if ((item = cJSON_GetObjectItemCaseSensitive(params, "robust_enhanced_retry")) && cJSON_IsBool(item))
+                    new_config.robust_enhanced_retry = cJSON_IsTrue(item);
 
                 auto rejected = tnc.update_config(new_config);
 
@@ -1409,6 +1425,7 @@ int main(int argc, char** argv) {
                     g_ui_state->fragmentation_enabled = new_config.fragmentation_enabled;
                     g_ui_state->ofdm_rx_enabled = new_config.ofdm_rx_enabled;
                     g_ui_state->robust_rx_enabled = new_config.robust_rx_enabled;
+                    g_ui_state->robust_enhanced_retry = new_config.robust_enhanced_retry;
                     g_ui_state->mfsk_rx_enabled = new_config.mfsk_rx_enabled;
 
                     // Map modulation string back to index
@@ -1488,6 +1505,7 @@ int main(int argc, char** argv) {
                 new_config.tx_blanking_enabled = state.tx_blanking_enabled;
                 new_config.ofdm_rx_enabled = state.ofdm_rx_enabled;
                 new_config.robust_rx_enabled = state.robust_rx_enabled;
+                new_config.robust_enhanced_retry = state.robust_enhanced_retry;
                 new_config.mfsk_rx_enabled = state.mfsk_rx_enabled;
                 new_config.tx_drive = state.tx_drive;
                 new_config.audio_input_device = state.audio_input_device;

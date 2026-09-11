@@ -1763,19 +1763,17 @@ private:
                         tone_run_start_ms_ = -1;
                         was_blanking = false;
                     }
-                    bool mfsk_rx = config_.mfsk_rx_enabled || config_.modem_type == 1;
-                    bool ofdm_rx = config_.ofdm_rx_enabled || config_.modem_type == 0;
-                    bool robust_rx = config_.robust_rx_enabled || config_.modem_type == 2;
-                    if (ofdm_rx)
-                        decoder_->process(buffer.data(), n, frame_callback);
-                    if (mfsk_rx)
-                        for (int i = 0; i < 3; ++i)
-                            mfsk_decoders_[i]->process(buffer.data(), n, mfsk_callbacks[i]);
-                    if (robust_rx) {
-                        robust_decoder_->process(buffer.data(), n, robust_frame_callback);
-                        robust_decoder_n_->process(buffer.data(), n, robust_n_frame_callback);
+                    bool mfsk_rx, ofdm_rx, robust_rx, enhanced_retry, sync_only;
+                    {
+                        std::lock_guard<std::mutex> lock(config_mutex_);
+                        mfsk_rx = config_.mfsk_rx_enabled || config_.modem_type == 1;
+                        ofdm_rx = config_.ofdm_rx_enabled || config_.modem_type == 0;
+                        robust_rx = config_.robust_rx_enabled || config_.modem_type == 2;
+                        enhanced_retry = config_.robust_enhanced_retry;
+                        sync_only = config_.csma_sync_only;
                     }
-
+                    robust_decoder_->set_enhanced_retry(enhanced_retry);
+                    robust_decoder_n_->set_enhanced_retry(enhanced_retry);
                     bool on_air = tx_on_air_.load();
                     if (!on_air) {
                         if (was_on_air)
@@ -1830,13 +1828,26 @@ private:
                         tone_run_start_ms_ = -1;
                     }
 
+                    if (sync_only && tnow < tone_hold_until_ms_)
+                        set_tx_lockout((tone_hold_until_ms_ - tnow) / 1000.0f);
+                    if (ofdm_rx)
+                        decoder_->process(buffer.data(), n, frame_callback);
+                    if (mfsk_rx)
+                        for (int i = 0; i < 3; ++i)
+                            mfsk_decoders_[i]->process(buffer.data(), n, mfsk_callbacks[i]);
+                    if (robust_rx) {
+                        robust_decoder_->process(buffer.data(), n, robust_frame_callback);
+                        robust_decoder_n_->process(buffer.data(), n, robust_n_frame_callback);
+                    }
+
+                    tnow = steady_now_ms();
                     // sync DCD: OFDM meta-validated in_frame and pilot-confirmed
                     // RDM collects only; MFSK syncs are too loose to gate TX on
                     dcd_active_ = (ofdm_rx && decoder_->in_frame()) ||
                                   (robust_rx &&
                                    (robust_decoder_->carrier_active() ||
                                     robust_decoder_n_->carrier_active())) ||
-                                  (config_.csma_sync_only &&
+                                  (sync_only &&
                                    tnow < tone_hold_until_ms_);
                     if (dcd_active_) {
                         if (tnow - last_dcd_ms_ > 1500 &&
@@ -2343,6 +2354,7 @@ public:
             config_.mfsk_rx_enabled = new_config.mfsk_rx_enabled;
             config_.ofdm_rx_enabled = new_config.ofdm_rx_enabled;
             config_.robust_rx_enabled = new_config.robust_rx_enabled;
+            config_.robust_enhanced_retry = new_config.robust_enhanced_retry;
             if (config_.tx_drive != new_config.tx_drive) {
                 config_.tx_drive = new_config.tx_drive;
                 if (audio_) audio_->set_tx_gain(config_.tx_drive);

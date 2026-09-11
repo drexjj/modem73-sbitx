@@ -157,6 +157,7 @@ struct TNCUIState {
 
     bool ofdm_rx_enabled = true;
     bool robust_rx_enabled = true;
+    bool robust_enhanced_retry = false;
     bool mfsk_rx_enabled = true;
 
     bool csma_enabled = true;
@@ -761,6 +762,7 @@ struct TNCUIState {
         fprintf(f, "tx_blanking_enabled=%d\n", tx_blanking_enabled ? 1 : 0);
         fprintf(f, "ofdm_rx_enabled=%d\n", ofdm_rx_enabled ? 1 : 0);
         fprintf(f, "robust_rx_enabled=%d\n", robust_rx_enabled ? 1 : 0);
+        fprintf(f, "robust_enhanced_retry=%d\n", robust_enhanced_retry ? 1 : 0);
         fprintf(f, "mfsk_rx_enabled=%d\n", mfsk_rx_enabled ? 1 : 0);
         fprintf(f, "# Audio/PTT\n");
         fprintf(f, "audio_input=%s\n", audio_input_device.c_str());
@@ -881,6 +883,7 @@ struct TNCUIState {
                 else if (strcmp(key, "tx_blanking_enabled") == 0) tx_blanking_enabled = atoi(value) != 0;
                 else if (strcmp(key, "ofdm_rx_enabled") == 0) ofdm_rx_enabled = atoi(value) != 0;
                 else if (strcmp(key, "robust_rx_enabled") == 0) robust_rx_enabled = atoi(value) != 0;
+                else if (strcmp(key, "robust_enhanced_retry") == 0) robust_enhanced_retry = atoi(value) != 0;
                 else if (strcmp(key, "mfsk_rx_enabled") == 0) mfsk_rx_enabled = atoi(value) != 0;
                 else if (strcmp(key, "audio_input") == 0) audio_input_device = value;
                 else if (strcmp(key, "audio_output") == 0) audio_output_device = value;

@@ -157,6 +157,7 @@ struct TNCConfig {
     bool mfsk_rx_enabled = true;
     bool ofdm_rx_enabled = true;
     bool robust_rx_enabled = true;
+    bool robust_enhanced_retry = false;
 
     // Fragmentation settings
     bool fragmentation_enabled = false;

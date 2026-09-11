@@ -830,6 +830,8 @@ public:
 
     bool debug_log = true;
 
+    void set_enhanced_retry(bool enabled) { enhanced_retry_ = enabled; }
+
     float get_last_snr() const { return last_snr_; }
     float get_last_ber() const { return last_ber_; }
     float get_ber_ema() const { return ber_ema_; }
@@ -879,6 +881,7 @@ private:
     CODE::PolarListDecoder<mesg_type, 14> polar_decoder_;
     CODE::PolarListDecoder<mesg64_type, 14> polar_decoder64_;
     CODE::PolarEncoder<int8_t> ber_encoder_;
+    bool enhanced_retry_ = false;
     CODE::CRC<uint32_t> crc_{0x8F6E37A0};
 
     static const int bpf_len = 257;
@@ -1916,7 +1919,7 @@ private:
         return false;
     }
 
-    bool try_decode(RobustMode mode, FrameCallback callback) {
+    bool try_decode(RobustMode mode, FrameCallback callback, bool enhanced = false) {
         using namespace robust_detail;
         const int order = RobustParams::code_order(mode);
         const int cbits = RobustParams::code_bits(mode);
@@ -1931,6 +1934,7 @@ private:
         int pilot_row_of[RobustParams::NROWS_MAX];
         int npil = 0;
         value dphi = 0;
+        static thread_local value pilot_noise[RobustParams::NROWS_MAX / RobustParams::NS + 2][RobustParams::NC_MAX];
         auto rowrot = [&](int i) {
             return DSP::polar<value>(1, -dphi * (value)i / RobustParams::NS);
         };
@@ -2164,6 +2168,10 @@ private:
                     if (k > 0) { acc = acc + value(0.2) * flat[k - 1]; w += value(0.2); }
                     if (k + 1 < nc_) { acc = acc + value(0.2) * flat[k + 1]; w += value(0.2); }
                     chanP[npil][k] = (value(1) / w) * acc * DSP::polar<value>(1, slope * k);
+                    if (enhanced) {
+                        value scale = (k == 0 || k + 1 == nc_) ? value(0.125) : value(0.24);
+                        pilot_noise[npil][k] = norm(raw[k] - chanP[npil][k]) / scale;
+                    }
                 }
                 pilot_row_of[i] = npil;
                 ++npil;
@@ -2202,7 +2210,26 @@ private:
             static const value tw1[] = {0.25, 0.5, 0.25};
             static const value tw2[] = {0.1, 0.2, 0.4, 0.2, 0.1};
             const value* tw = R == 1 ? tw1 : tw2;
-            for (int p = 0; p < npil; ++p)
+            for (int p = 0; p < npil; ++p) {
+                value weights[5];
+                for (int d = -R; d <= R; ++d) {
+                    int q = p + d;
+                    value weight = tw[d + R];
+                    if (enhanced && q >= 0 && q < npil && q != p) {
+                        if (std::abs(row_off_[p * RobustParams::NS] - row_off_[q * RobustParams::NS]) >= 32) {
+                            weight = 0;
+                        } else {
+                            value delta = 0, noise = 0, power = 0;
+                            for (int c = 0; c < nc_; ++c) {
+                                delta += norm(chanP[p][c] - chanP[q][c]);
+                                noise += value(0.44) * (pilot_noise[p][c] + pilot_noise[q][c]);
+                                power += norm(chanP[p][c]) + norm(chanP[q][c]);
+                            }
+                            weight *= std::min(value(1), (noise + value(0.02) * power) / (delta + value(1e-12)));
+                        }
+                    }
+                    weights[d + R] = weight;
+                }
                 for (int k = 0; k < nc_; ++k) {
                     if (R == 0) {
                         chanS[p][k] = chanP[p][k];
@@ -2214,11 +2241,15 @@ private:
                         int q = p + d;
                         if (q < 0 || q >= npil)
                             continue;
-                        acc = acc + tw[d + R] * chanP[q][k];
-                        w += tw[d + R];
+                        value weight = weights[d + R];
+                        if (weight == 0)
+                            continue;
+                        acc = acc + weight * chanP[q][k];
+                        w += weight;
                     }
                     chanS[p][k] = (value(1) / w) * acc;
                 }
+            }
         };
         static thread_local value cgate[RobustParams::NROWS_MAX / RobustParams::NS + 2]
                           [RobustParams::NC_MAX];
@@ -2242,6 +2273,8 @@ private:
         for (int k = 0; k < nc_; ++k)
             cgate[npil - 1][k] = 1;
 
+        static thread_local int8_t ber_reference[1 << 15];
+        bool capture_ber = true;
         int kbit = 0;
         value snr_acc = 0, row_pwr = 0;
         int snr_rows = 0;
@@ -2307,6 +2340,22 @@ private:
                 if (cp_mean > 0)
                     prec = std::min(precision * norm(chan[k]) / cp_mean, value(1023));
                 prec *= cgate[pa][k];
+                if (enhanced) {
+                    value noise = 0, weight = 0;
+                    for (int p = std::max(0, pa - 1); p <= std::min(npil - 1, pb + 1); ++p) {
+                        value w = p == pa || p == pb ? value(2) : value(1);
+                        noise += w * pilot_noise[p][k];
+                        weight += w;
+                    }
+                    value estimate = norm(chan[k]) / (noise / weight + value(1e-12));
+                    prec = std::min(prec, estimate);
+                }
+                if (capture_ber) {
+                    if (kbit < total_bits)
+                        ber_reference[kbit] = dem[k].real() < 0 ? -1 : dem[k].real() > 0 ? 1 : 0;
+                    if (kbit + 1 < total_bits)
+                        ber_reference[kbit + 1] = dem[k].imag() < 0 ? -1 : dem[k].imag() > 0 ? 1 : 0;
+                }
                 code_type b[2];
                 prec *= value(RDM_LLR_GAIN);
                 PhaseShiftKeying<4, cmplx, code_type>::soft(b, dem[k], prec);
@@ -2318,6 +2367,7 @@ private:
         };
         smooth(1);
         demod();
+        capture_ber = false;
         if (kbit < total_bits)
             return fail();
         if (row_pwr < value(1e-12))
@@ -2371,6 +2421,8 @@ private:
 
         combine_shuffle();
         bool decoded = scan(mesg_, polar_decoder_);
+        if (decoded && enhanced)
+            ++stats_retry_success;
         static const int alt_radius[] = {2, 0};
         for (int ai = 0; ai < 2 && !decoded; ++ai) {
             smooth(alt_radius[ai]);
@@ -2432,12 +2484,15 @@ private:
             }
         }
         if (!decoded) {
+            fail();
+            if (!enhanced && enhanced_retry_)
+                return try_decode(mode, callback, true);
             if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
                       << ": decode failed " << ROBUST_MODE_NAMES[(int)mode]
                       << " est SNR=" << (snr_rows > 0
                           ? 10 * std::log10(std::max(snr_acc / snr_rows, value(0.1)))
                           : value(0)) << " dB" << std::endl;
-            return fail();
+            return false;
         }
 
         uint8_t out[RobustParams::DATA_BYTES];
@@ -2445,12 +2500,14 @@ private:
             CODE::set_le_bit(out, i, ber_mesg_[i] < 0);
 
         ber_encoder_(ber_code_, ber_mesg_, RobustParams::frozen(mode), order);
+        static thread_local int8_t ber_permuted[1 << 14];
+        shuffle_enc(ber_permuted, ber_code_, order);
         int errs = 0, counted = 0;
-        for (int i = 0; i < cbits; ++i) {
-            if (code_[i] == 0)          // punctured or erased, never received
+        for (int i = 0; i < total_bits; ++i) {
+            if (ber_reference[i] == 0)
                 continue;
             ++counted;
-            if ((code_[i] < 0) != (ber_code_[i] < 0))
+            if (ber_reference[i] != ber_permuted[poff + i % cbits])
                 ++errs;
         }
         last_ber_ = counted ? (value)errs / counted : 0;

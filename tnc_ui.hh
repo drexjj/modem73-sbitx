@@ -141,6 +141,7 @@ private:
         FIELD_TX_BLANKING,
         FIELD_RX_OFDM,
         FIELD_RX_ROBUST,
+        FIELD_ROBUST_RETRY,
         FIELD_RX_MFSK,
         FIELD_AUDIO_INPUT,
         FIELD_AUDIO_OUTPUT,
@@ -951,6 +952,7 @@ private:
         p.tx_blanking = state_.tx_blanking_enabled ? 1 : 0;
         p.rx_ofdm = state_.ofdm_rx_enabled ? 1 : 0;
         p.rx_robust = state_.robust_rx_enabled ? 1 : 0;
+        p.robust_enhanced_retry = state_.robust_enhanced_retry ? 1 : 0;
         p.rx_mfsk = state_.mfsk_rx_enabled ? 1 : 0;
         p.vox_freq = state_.vox_tone_freq;
         p.vox_lead_ms = state_.vox_lead_ms;
@@ -984,6 +986,7 @@ private:
         state_.tx_blanking_enabled = p.tx_blanking != 0;
         state_.ofdm_rx_enabled = p.rx_ofdm != 0;
         state_.robust_rx_enabled = p.rx_robust != 0;
+        state_.robust_enhanced_retry = p.robust_enhanced_retry != 0;
         state_.mfsk_rx_enabled = p.rx_mfsk != 0;
         state_.vox_tone_freq = std::clamp(p.vox_freq, 300, 3000);
         state_.vox_lead_ms = std::clamp(p.vox_lead_ms, 0, 310);
@@ -1051,6 +1054,7 @@ private:
 
     bool should_skip_field(int field) {
         if (field == FIELD_FREQ) return true;
+        if (field == FIELD_ROBUST_RETRY && !state_.robust_rx_enabled && state_.modem_type_index != 2) return true;
         
         // TX blanking is forced on while CSMA is enabled
         if (state_.csma_enabled && field == FIELD_TX_BLANKING) return true;
@@ -1211,6 +1215,10 @@ private:
         row++;
         if (field == FIELD_RX_ROBUST) return row;
         row++;
+        if (state_.robust_rx_enabled || state_.modem_type_index == 2) {
+            if (field == FIELD_ROBUST_RETRY) return row;
+            row++;
+        }
         if (field == FIELD_RX_MFSK) return row;
         row += 2;
         row++;
@@ -1440,6 +1448,9 @@ private:
                 break;
             case FIELD_RX_ROBUST:
                 toggle_rx_decoder(state_.robust_rx_enabled, "ROBUST");
+                break;
+            case FIELD_ROBUST_RETRY:
+                state_.robust_enhanced_retry = !state_.robust_enhanced_retry;
                 break;
             case FIELD_RX_MFSK:
                 toggle_rx_decoder(state_.mfsk_rx_enabled, "MFSK");
@@ -3462,6 +3473,17 @@ private:
                 draw_rx_forced(dy, c2);
         }
         row++;
+
+        if (state_.robust_rx_enabled || state_.modem_type_index == 2) {
+            dy = visible_y(row);
+            if (dy >= 0) {
+                draw_toggle_field(dy, c1, c2, "RDM Retry", FIELD_ROBUST_RETRY, state_.robust_enhanced_retry);
+                attron(A_DIM);
+                mvaddstr(dy, c2 + 10, "more CPU");
+                attroff(A_DIM);
+            }
+            row++;
+        }
 
         dy = visible_y(row);
         if (dy >= 0) {

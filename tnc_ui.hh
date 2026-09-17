@@ -142,11 +142,10 @@ private:
         FIELD_RX_OFDM,
         FIELD_RX_ROBUST,
         FIELD_RX_MFSK,
+        FIELD_TX_LEVEL,
         FIELD_AUDIO_INPUT,
         FIELD_AUDIO_OUTPUT,
-        FIELD_TX_LEVEL,
         FIELD_PTT_TYPE,
-        FIELD_HAMLIB_INFO,
         FIELD_VOX_FREQ,
         FIELD_VOX_LEAD,
         FIELD_VOX_TAIL,
@@ -158,14 +157,15 @@ private:
         FIELD_GPIO_LINE,
         FIELD_GPIO_INVERT,
 #endif
-        FIELD_HAMLIB_MODEL,
-        FIELD_HAMLIB_DEVICE,
-        FIELD_HAMLIB_BAUD,
 #ifdef WITH_CM108
         FIELD_CM108_GPIO,
         FIELD_CM108_DEVICE,
 #endif
         FIELD_TX_DELAY,
+        FIELD_HAMLIB_INFO,
+        FIELD_HAMLIB_MODEL,
+        FIELD_HAMLIB_DEVICE,
+        FIELD_HAMLIB_BAUD,
         FIELD_NET_PORT,
         FIELD_CONTROL_PORT,
         FIELD_LAN_MODE,
@@ -650,7 +650,6 @@ private:
     void handle_mouse(MEVENT& event) {
         int rows, cols;
         getmaxyx(stdscr, rows, cols);
-        (void)rows;  
         
         if (event.bstate & BUTTON1_CLICKED || event.bstate & BUTTON1_PRESSED) {
             // Tab clicks
@@ -723,6 +722,17 @@ private:
             }
         }
         
+        if (current_tab_ == 1 && event.x < cols/2 - 2) {
+            int max_scroll = std::max(0, config_total_rows_ - (rows - 8));
+            if (event.bstate & BUTTON4_PRESSED) {
+                config_scroll_ = std::max(0, config_scroll_ - 3);
+                config_follow_ = false;
+            } else if (event.bstate & BUTTON5_PRESSED) {
+                config_scroll_ = std::min(max_scroll, config_scroll_ + 3);
+                config_follow_ = false;
+            }
+        }
+
         // Scroll wheel in log
         if (current_tab_ == 2) {
             if (event.bstate & BUTTON4_PRESSED) {
@@ -1198,7 +1208,7 @@ private:
         }
         if (field == FIELD_CSMA_INFO) return row;
         row += 2;
-        row += 2;
+        row++;
         if (field == FIELD_FRAGMENTATION) return row;
         row += 2;
         if (!state_.csma_enabled) {
@@ -1214,18 +1224,15 @@ private:
         if (field == FIELD_RX_MFSK) return row;
         row += 2;
         row++;
+        if (field == FIELD_TX_LEVEL) return row;
+        row += 2;
+        row++;
         if (field == FIELD_AUDIO_INPUT) return row;
         row++;
         if (field == FIELD_AUDIO_OUTPUT) return row;
         row++;
-        if (field == FIELD_TX_LEVEL) return row;
-        row++;
         if (field == FIELD_PTT_TYPE) return row;
         row++;
-        if (hamlib_info_field()) {
-            if (field == FIELD_HAMLIB_INFO) return row;
-            row++;
-        }
         if (state_.ptt_type_index == 2) {
             if (field == FIELD_VOX_FREQ) return row;
             row++;
@@ -1252,14 +1259,6 @@ private:
             row++;
         }
 #endif
-        if (hamlib_fields()) {
-            if (field == FIELD_HAMLIB_MODEL) return row;
-            row++;
-            if (field == FIELD_HAMLIB_DEVICE) return row;
-            row++;
-            if (field == FIELD_HAMLIB_BAUD) return row;
-            row++;
-        }
 #ifdef WITH_CM108
         if (state_.ptt_type_index == 4) {
             if (field == FIELD_CM108_GPIO) return row;
@@ -1270,6 +1269,27 @@ private:
 #endif
         if (field == FIELD_TX_DELAY) return row;
         row++;
+        if (state_.ptt_type_index == 5) {
+            if (field == FIELD_HAMLIB_MODEL) return row;
+            row++;
+            if (field == FIELD_HAMLIB_DEVICE) return row;
+            row++;
+            if (field == FIELD_HAMLIB_BAUD) return row;
+            row++;
+        }
+        if (hamlib_info_field()) {
+            row += 2;
+            if (field == FIELD_HAMLIB_INFO) return row;
+            row++;
+            if (state_.hamlib_info) {
+                if (field == FIELD_HAMLIB_MODEL) return row;
+                row++;
+                if (field == FIELD_HAMLIB_DEVICE) return row;
+                row++;
+                if (field == FIELD_HAMLIB_BAUD) return row;
+                row++;
+            }
+        }
         row++;
         row++;
         if (field == FIELD_NET_PORT) return row;
@@ -1715,6 +1735,7 @@ private:
 
             attron(A_DIM);
             mvaddstr(dialog_y + dialog_h - 1, dialog_x + 2, " Enter=OK  Esc=Cancel ");
+            mvaddstr(dialog_y + dialog_h - 1, dialog_x + dialog_w - 15, "(needs restart)");
             attroff(A_DIM);
 
             refresh();
@@ -1726,7 +1747,7 @@ private:
             } else if (ch == '\n' || ch == KEY_ENTER) {
                 if (items[selection] != state_.ptt_type_index) {
                     state_.ptt_type_index = items[selection];
-                    state_.add_log("PTT: " + PTT_TYPE_OPTIONS[items[selection]]);
+                    state_.add_log("(!) PTT changed to " + PTT_TYPE_OPTIONS[items[selection]] + ", restart required");
                     apply_settings();
                 }
                 break;
@@ -2232,6 +2253,7 @@ private:
         mvvline(y + 1, x + w - 1, ACS_VLINE, h - 2);
     }
     
+
     void draw_hline(int y, int x, int w, bool connect_left = false, bool connect_right = false) {
         mvaddch(y, x, connect_left ? ACS_LTEE : ACS_HLINE);
         mvhline(y, x + 1, ACS_HLINE, w - 2);
@@ -3142,12 +3164,21 @@ private:
 
 
         if (current_tab_ == 1) {
-            int field_row = config_field_row(current_field_);
-            if (field_row < config_scroll_ + 2) {
-                config_scroll_ = std::max(0, field_row - 2);
-            } else if (field_row > config_scroll_ + visible_rows - 3) {
-                config_scroll_ = field_row - visible_rows + 3;
+            if (current_field_ != config_last_field_) {
+                config_last_field_ = current_field_;
+                config_follow_ = true;
             }
+            if (config_follow_) {
+                int field_row = config_field_row(current_field_);
+                if (field_row < config_scroll_ + 2) {
+                    config_scroll_ = std::max(0, field_row - 2);
+                } else if (field_row > config_scroll_ + visible_rows - 3) {
+                    config_scroll_ = field_row - visible_rows + 3;
+                }
+            }
+        }
+        if (config_total_rows_ > 0) {
+            config_scroll_ = std::min(config_scroll_, std::max(0, config_total_rows_ - visible_rows));
         }
 
         
@@ -3237,8 +3268,6 @@ private:
         if (dy >= 0) {
             attron(A_DIM);
             mvaddstr(dy, c1, "CSMA");
-            mvaddnstr(dy, c1 + 6, "waits for a clear channel before transmitting",
-                      std::max(0, divider - (c1 + 6) - 1));
             attroff(A_DIM);
         }
         row++;
@@ -3250,15 +3279,7 @@ private:
         dy = visible_y(row);
         if (dy >= 0) {
             static const char* MODE_NAMES[3] = {"THRESHOLD", "SYNC", "RANKED"};
-            static const char* MODE_HINT[3] = {
-                "busy = any audio over Threshold",
-                "busy = a real modem signal only",
-                "SYNC plus stations take turns"};
-            int m = csma_mode();
-            draw_selector_field(dy, c1, c2, "Mode", FIELD_CSMA_MODE, MODE_NAMES[m]);
-            attron(A_DIM);
-            mvaddstr(dy, c2 + 12, MODE_HINT[m]);
-            attroff(A_DIM);
+            draw_selector_field(dy, c1, c2, "Mode", FIELD_CSMA_MODE, MODE_NAMES[csma_mode()]);
         }
         row++;
 
@@ -3266,7 +3287,7 @@ private:
         if (dy >= 0) {
             bool sel_h = (current_field_ == FIELD_CSMA_HELP);
             if (sel_h) attron(A_BOLD); else attron(A_DIM);
-            mvprintw(dy, c1 + 2, "%s[?] Which one should I use?", sel_h ? "> " : "  ");
+            mvprintw(dy, c1 + 2, "%s[?] Which mode", sel_h ? "> " : "  ");
             if (sel_h) attroff(A_BOLD); else attroff(A_DIM);
         }
         row++;
@@ -3383,9 +3404,6 @@ private:
                 if (dy >= 0) {
                     draw_toggle_field(dy, c1 + 2, c2, "Fast Floor", FIELD_FAST_FLOOR,
                                       state_.csma_fast_floor);
-                    attron(A_DIM);
-                    mvaddstr(dy, c2 + 8, "only if all stations run 2.3>");
-                    attroff(A_DIM);
                 }
                 row++;
             }
@@ -3417,8 +3435,6 @@ private:
             mvaddstr(dy, c1 + 14, "(restart)");
             attroff(A_DIM);
         }
-        row++;
-        
         row++;
         
         dy = visible_y(row);
@@ -3471,6 +3487,31 @@ private:
         }
         row += 2;
 
+        dy = visible_y(row);
+        if (dy >= 0) {
+            attron(A_DIM);
+            mvaddstr(dy, c1, "TX OUTPUT");
+            mvaddstr(dy, c1 + 10, "(applies live)");
+            attroff(A_DIM);
+        }
+        row++;
+
+        dy = visible_y(row);
+        if (dy >= 0) {
+            if (!rig_ui()) {
+                char lvl_buf[24];
+                snprintf(lvl_buf, sizeof(lvl_buf), "%d%%",
+                         (int)lround(state_.tx_drive.load() * 100));
+                draw_selector_field(dy, c1, c2, "TX Level", FIELD_TX_LEVEL, lvl_buf);
+            } else {
+                attron(A_DIM);
+                mvaddstr(dy, c1, "TX Level");
+                mvaddstr(dy, c2, "RIG tab");
+                attroff(A_DIM);
+            }
+        }
+        row += 2;
+
         // Audio / ptt
 
         dy = visible_y(row);
@@ -3516,27 +3557,6 @@ private:
 
         dy = visible_y(row);
         if (dy >= 0) {
-            if (!rig_ui()) {
-                char lvl_buf[24];
-                snprintf(lvl_buf, sizeof(lvl_buf), "%d%%",
-                         (int)lround(state_.tx_drive.load() * 100));
-                draw_selector_field(dy, c1, c2, "TX Level", FIELD_TX_LEVEL, lvl_buf);
-                attron(A_DIM);
-                mvaddnstr(dy, c2 + 10, "Soundcard output level, applies live",
-                          std::max(0, divider - (c2 + 10) - 1));
-                attroff(A_DIM);
-            } else {
-                attron(A_DIM);
-                mvaddstr(dy, c1, "TX Level");
-                mvaddnstr(dy, c2 + 10, "TX audio level and controls under RIG tab",
-                          std::max(0, divider - (c2 + 10) - 1));
-                attroff(A_DIM);
-            }
-        }
-        row++;
-
-        dy = visible_y(row);
-        if (dy >= 0) {
             draw_field(dy, c1, c2, "PTT", FIELD_PTT_TYPE,
                        PTT_TYPE_OPTIONS[state_.ptt_type_index], true);
             bool ptt_err = state_.ptt_failed.load() ||
@@ -3554,13 +3574,7 @@ private:
             }
         }
         row++;
-        if (hamlib_info_field()) {
-            dy = visible_y(row);
-            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Info", FIELD_HAMLIB_INFO,
-                                             state_.hamlib_info ? "HAMLIB" : "NONE");
-            row++;
-        }
-        
+
         if (state_.ptt_type_index == 2) {  // VOX
             dy = visible_y(row);
             if (dy >= 0) {
@@ -3637,26 +3651,6 @@ private:
             row++;
         }
 #endif
-        if (hamlib_fields()) {
-            dy = visible_y(row);
-            if (dy >= 0) {
-                std::string m = state_.hamlib_model > 0 ? hamlib_model_label(state_.hamlib_model) : "select";
-                if (m.length() > 22) m = m.substr(0, 21) + "~";
-                draw_field(dy, c1, c2, "Rig", FIELD_HAMLIB_MODEL, m, true);
-            }
-            row++;
-            dy = visible_y(row);
-            if (dy >= 0) {
-                std::string d = state_.hamlib_device.empty() ? "none" : state_.hamlib_device;
-                if (d.length() > 22) d = d.substr(0, 21) + "~";
-                draw_field(dy, c1, c2, "Rig Device", FIELD_HAMLIB_DEVICE, d, true);
-            }
-            row++;
-            dy = visible_y(row);
-            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Baud", FIELD_HAMLIB_BAUD,
-                                             state_.hamlib_baud > 0 ? std::to_string(state_.hamlib_baud) : std::string("default"));
-            row++;
-        }
 #ifdef WITH_CM108
         if (state_.ptt_type_index == 4) {  // CM108
             dy = visible_y(row);
@@ -3685,6 +3679,47 @@ private:
             draw_selector_field(dy, c1, c2, "TX Delay", FIELD_TX_DELAY, txd_buf);
         }
         row++;
+        auto draw_rig_fields = [&]() {
+            dy = visible_y(row);
+            if (dy >= 0) {
+                std::string m = state_.hamlib_model > 0 ? hamlib_model_label(state_.hamlib_model) : "select";
+                if (m.length() > 22) m = m.substr(0, 21) + "~";
+                draw_field(dy, c1, c2, "Rig", FIELD_HAMLIB_MODEL, m, true);
+            }
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) {
+                std::string d = state_.hamlib_device.empty() ? "none" : state_.hamlib_device;
+                if (d.length() > 22) d = d.substr(0, 21) + "~";
+                draw_field(dy, c1, c2, "Rig Device", FIELD_HAMLIB_DEVICE, d, true);
+            }
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Baud", FIELD_HAMLIB_BAUD,
+                                             state_.hamlib_baud > 0 ? std::to_string(state_.hamlib_baud) : std::string("default"));
+            row++;
+        };
+        if (state_.ptt_type_index == 5) {
+            draw_rig_fields();
+        }
+        if (hamlib_info_field()) {
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) {
+                attron(A_DIM);
+                mvaddstr(dy, c1, "MISC");
+                mvaddstr(dy, c1 + 5, "(restart)");
+                attroff(A_DIM);
+            }
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Info", FIELD_HAMLIB_INFO,
+                                             state_.hamlib_info ? "HAMLIB" : "OFF");
+            row++;
+            if (state_.hamlib_info) {
+                draw_rig_fields();
+            }
+        }
         row++;
         
         // Network section
@@ -3764,6 +3799,20 @@ private:
                 attron(A_DIM);
                 mvaddstr(hint_y, c1, "Enter=load s=save x=del");
                 attroff(A_DIM);
+            }
+        }
+        int total_rows = row + 1;
+        if (current_field_ == FIELD_PRESET) {
+            total_rows++;
+        }
+        config_total_rows_ = total_rows;
+        if (visible_rows > 0 && total_rows > visible_rows) {
+            int max_scroll = total_rows - visible_rows;
+            int thumb = std::max(1, visible_rows * visible_rows / total_rows);
+            int track = visible_rows - thumb;
+            int pos = (int)(((long)std::min(scroll, max_scroll) * track + max_scroll / 2) / max_scroll);
+            for (int r = 0; r < thumb; r++) {
+                mvaddch(start_y + pos + r, divider, ACS_BLOCK);
             }
         }
         
@@ -5811,7 +5860,7 @@ private:
     }
     
     void draw_csma_help(int rows, int cols) {
-        int w = 58, h = 19;
+        int w = 66, h = 20;
         int x0 = (cols - w) / 2, y0 = (rows - h) / 2;
         attron(COLOR_PAIR(4));
         for (int y = y0; y < y0 + h && y < rows; y++)
@@ -5837,6 +5886,7 @@ private:
             mvaddstr(y, rx, v); y++;
         };
         item("Enabled",   "turn channel checking on or off");
+        item("Mode",      "THRESHOLD any audio, SYNC modem only, RANKED turns");
         item("Threshold", "level above this counts as busy");
         item("Level",     "what the channel measures right now");
         item("Band",      "HF or VHF/UHF timing for presets");
@@ -6294,6 +6344,9 @@ private:
     float wf_floor_db_ = -80.0f;
     DSP::RealToHalfComplexTransform<WF_FFT, std::complex<float>> wf_fft_;
     int config_scroll_ = 0;
+    int config_total_rows_ = 0;
+    int config_last_field_ = -1;
+    bool config_follow_ = true;
     int log_scroll_ = 0;
     bool log_follow_ = true;
     int utils_selection_ = 0;

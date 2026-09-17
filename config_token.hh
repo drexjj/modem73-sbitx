@@ -44,7 +44,6 @@ struct Profile {
     int vox_freq = 1200;
     int vox_lead_ms = 150;
     int vox_tail_ms = 100;
-    int robust_enhanced_retry = 0;
 };
 
 struct Field {
@@ -111,8 +110,6 @@ static const Field SCHEMA[] = {
      [](Profile& p, int v) { p.vox_lead_ms = v * 10; }},
     {"VOX tail", 5, [](const Profile& p) { return p.vox_tail_ms / 10; },
      [](Profile& p, int v) { p.vox_tail_ms = v * 10; }},
-    {"ROBUST retry", 1, [](const Profile& p) { return p.robust_enhanced_retry; },
-     [](Profile& p, int v) { p.robust_enhanced_retry = v; }},
 };
 
 static constexpr int SCHEMA_COUNT = (int)(sizeof(SCHEMA) / sizeof(SCHEMA[0]));

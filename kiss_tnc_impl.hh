@@ -2354,7 +2354,6 @@ public:
             config_.mfsk_rx_enabled = new_config.mfsk_rx_enabled;
             config_.ofdm_rx_enabled = new_config.ofdm_rx_enabled;
             config_.robust_rx_enabled = new_config.robust_rx_enabled;
-            config_.robust_enhanced_retry = new_config.robust_enhanced_retry;
             if (config_.tx_drive != new_config.tx_drive) {
                 config_.tx_drive = new_config.tx_drive;
                 if (audio_) audio_->set_tx_gain(config_.tx_drive);

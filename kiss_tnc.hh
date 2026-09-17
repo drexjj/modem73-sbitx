@@ -36,7 +36,12 @@ namespace KISS {
 
 
 #if defined(__linux__) && !defined(__ANDROID__)
+#if __has_include(<linux/gpio.h>)
+#include <linux/gpio.h>
+#endif
+#ifdef GPIO_V2_GET_LINE_IOCTL
 #define WITH_GPIO_PTT 1
+#endif
 #endif
 
 enum class PTTType {

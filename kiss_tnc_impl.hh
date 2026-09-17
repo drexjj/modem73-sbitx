@@ -42,6 +42,9 @@
 #include "rigctl_ptt.hh"
 #include "hamlib_ptt.hh"
 #include "serial_ptt.hh"
+#ifdef WITH_GPIO_PTT
+#include "gpio_ptt.hh"
+#endif
 #ifdef WITH_CM108
 #include "cm108_ptt.hh"
 #endif
@@ -338,10 +341,29 @@ public:
                 ui_log("(!) PTT will not key the radio - check CM108 in settings");
             }
 #endif
+#ifdef WITH_GPIO_PTT
+        } else if (config_.ptt_type == PTTType::GPIO) {
+            gpio_ptt_ = std::make_unique<GpioPTT>();
+            if (!gpio_ptt_->open(config_.gpio_chip, config_.gpio_line, config_.gpio_active_low)) {
+                std::cerr << "Could not open GPIO PTT: " << gpio_ptt_->last_error() << std::endl;
+                ui_log(std::string("(!) GPIO PTT: ") + gpio_ptt_->last_error());
+                ui_log("(!) PTT will not key the radio - check GPIO chip and line in settings");
+            }
+#endif
         } else {
             dummy_ptt_ = std::make_unique<DummyPTT>();
             dummy_ptt_->connect();
         }
+#ifdef WITH_HAMLIB
+        if (config_.hamlib_info && !hamlib_ptt_ && config_.ptt_type != PTTType::RIGCTL) {
+            hamlib_info_ = std::make_unique<HamlibPTT>();
+            std::string err;
+            if (!hamlib_info_->open(config_.hamlib_model, config_.hamlib_device, config_.hamlib_baud, err))
+                ui_log("(!) Hamlib rig info: " + err);
+            else
+                ui_log("Hamlib: rig info from model " + std::to_string(config_.hamlib_model) + " on " + config_.hamlib_device);
+        }
+#endif
         
         server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd_ < 0) {
@@ -430,6 +452,10 @@ public:
             case PTTType::COM:
                 std::cerr << "PTT: COM " << config_.com_port 
                           << " (" << PTT_LINE_OPTIONS[config_.com_ptt_line] << ")" << std::endl;
+                break;
+            case PTTType::GPIO:
+                std::cerr << "PTT: GPIO " << config_.gpio_chip << " line " << config_.gpio_line
+                          << (config_.gpio_active_low ? " (active-low)" : "") << std::endl;
                 break;
             case PTTType::CM108:
 #ifdef WITH_CM108
@@ -1176,7 +1202,7 @@ private:
             if (!first && last && config_.ptt_type != PTTType::VOX) {
                 audio_->write_silence(config_.ptt_tail_ms * config_.sample_rate / 1000);
                 audio_->drain_playback();
-                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM
+                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM || config_.ptt_type == PTTType::GPIO
 #ifdef WITH_CM108
                     || config_.ptt_type == PTTType::CM108
 #endif
@@ -1289,7 +1315,7 @@ private:
             
             if (first) {
                 // PTT on (for RIGCTL or COM mode)
-                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM
+                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM || config_.ptt_type == PTTType::GPIO
 #ifdef WITH_CM108
                     || config_.ptt_type == PTTType::CM108
 #endif
@@ -1337,7 +1363,7 @@ private:
                 audio_->drain_playback();
 
                 // PTT off
-                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM
+                if (config_.ptt_type == PTTType::RIGCTL || config_.ptt_type == PTTType::HAMLIB || config_.ptt_type == PTTType::COM || config_.ptt_type == PTTType::GPIO
 #ifdef WITH_CM108
                     || config_.ptt_type == PTTType::CM108
 #endif
@@ -1737,19 +1763,17 @@ private:
                         tone_run_start_ms_ = -1;
                         was_blanking = false;
                     }
-                    bool mfsk_rx = config_.mfsk_rx_enabled || config_.modem_type == 1;
-                    bool ofdm_rx = config_.ofdm_rx_enabled || config_.modem_type == 0;
-                    bool robust_rx = config_.robust_rx_enabled || config_.modem_type == 2;
-                    if (ofdm_rx)
-                        decoder_->process(buffer.data(), n, frame_callback);
-                    if (mfsk_rx)
-                        for (int i = 0; i < 3; ++i)
-                            mfsk_decoders_[i]->process(buffer.data(), n, mfsk_callbacks[i]);
-                    if (robust_rx) {
-                        robust_decoder_->process(buffer.data(), n, robust_frame_callback);
-                        robust_decoder_n_->process(buffer.data(), n, robust_n_frame_callback);
+                    bool mfsk_rx, ofdm_rx, robust_rx, enhanced_retry, sync_only;
+                    {
+                        std::lock_guard<std::mutex> lock(config_mutex_);
+                        mfsk_rx = config_.mfsk_rx_enabled || config_.modem_type == 1;
+                        ofdm_rx = config_.ofdm_rx_enabled || config_.modem_type == 0;
+                        robust_rx = config_.robust_rx_enabled || config_.modem_type == 2;
+                        enhanced_retry = config_.robust_enhanced_retry;
+                        sync_only = config_.csma_sync_only;
                     }
-
+                    robust_decoder_->set_enhanced_retry(enhanced_retry);
+                    robust_decoder_n_->set_enhanced_retry(enhanced_retry);
                     bool on_air = tx_on_air_.load();
                     if (!on_air) {
                         if (was_on_air)
@@ -1804,13 +1828,26 @@ private:
                         tone_run_start_ms_ = -1;
                     }
 
+                    if (sync_only && tnow < tone_hold_until_ms_)
+                        set_tx_lockout((tone_hold_until_ms_ - tnow) / 1000.0f);
+                    if (ofdm_rx)
+                        decoder_->process(buffer.data(), n, frame_callback);
+                    if (mfsk_rx)
+                        for (int i = 0; i < 3; ++i)
+                            mfsk_decoders_[i]->process(buffer.data(), n, mfsk_callbacks[i]);
+                    if (robust_rx) {
+                        robust_decoder_->process(buffer.data(), n, robust_frame_callback);
+                        robust_decoder_n_->process(buffer.data(), n, robust_n_frame_callback);
+                    }
+
+                    tnow = steady_now_ms();
                     // sync DCD: OFDM meta-validated in_frame and pilot-confirmed
                     // RDM collects only; MFSK syncs are too loose to gate TX on
                     dcd_active_ = (ofdm_rx && decoder_->in_frame()) ||
                                   (robust_rx &&
                                    (robust_decoder_->carrier_active() ||
                                     robust_decoder_n_->carrier_active())) ||
-                                  (config_.csma_sync_only &&
+                                  (sync_only &&
                                    tnow < tone_hold_until_ms_);
                     if (dcd_active_) {
                         if (tnow - last_dcd_ms_ > 1500 &&
@@ -1927,6 +1964,10 @@ private:
             ok = rigctl_->set_ptt(on);
         } else if (serial_ptt_) {
             ok = on ? serial_ptt_->ptt_on() : serial_ptt_->ptt_off();
+#ifdef WITH_GPIO_PTT
+        } else if (gpio_ptt_) {
+            ok = gpio_ptt_->set_ptt(on);
+#endif
 #ifdef WITH_CM108
         } else if (cm108_ptt_) {
             ok = cm108_ptt_->set_ptt(on);
@@ -2042,8 +2083,13 @@ private:
     std::unique_ptr<RigctlPTT> rigctl_;
 #ifdef WITH_HAMLIB
     std::unique_ptr<HamlibPTT> hamlib_ptt_;
+    std::unique_ptr<HamlibPTT> hamlib_info_;
+    HamlibPTT* hamlib_rig() const { return hamlib_ptt_ ? hamlib_ptt_.get() : hamlib_info_.get(); }
 #endif
     std::unique_ptr<SerialPTT> serial_ptt_;
+#ifdef WITH_GPIO_PTT
+    std::unique_ptr<GpioPTT> gpio_ptt_;
+#endif
 #ifdef WITH_CM108
     std::unique_ptr<CM108PTT> cm108_ptt_;
 #endif
@@ -2498,7 +2544,7 @@ public:
     std::string rigctl_command(const std::string& cmd) {
         if (rigctl_) return rigctl_->send_command(cmd);
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->command(cmd);
+        if (hamlib_rig()) return hamlib_rig()->command(cmd);
 #endif
         return "ERR: rigctl not enabled";
     }
@@ -2506,14 +2552,14 @@ public:
     bool is_rigctl_connected() const {
         if (rigctl_) return rigctl_->is_connected();
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->is_connected();
+        if (hamlib_rig()) return hamlib_rig()->is_connected();
 #endif
         return false;
     }
 
     bool hamlib_get_freq(double& hz) {
 #ifdef WITH_HAMLIB
-        if (hamlib_ptt_) return hamlib_ptt_->get_freq(hz);
+        if (hamlib_rig()) return hamlib_rig()->get_freq(hz);
 #endif
         (void)hz;
         return false;

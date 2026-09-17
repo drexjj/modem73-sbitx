@@ -6,7 +6,7 @@ CXXFLAGS = -std=c++17 -O3 $(ARCHFLAGS) -Wall -Wextra
 LDFLAGS = -lpthread -ldl -lm
 
 GIT_EXACT := $(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
-BASE_VERSION := 2.4.0
+BASE_VERSION := 2.4.2
 VERSION ?= $(if $(GIT_EXACT),$(GIT_EXACT),$(BASE_VERSION))
 CXXFLAGS += -DMODEM73_VERSION=\"$(VERSION)\"
 
@@ -101,6 +101,12 @@ ifneq ($(HIDAPI_LIBS),)
 	@if [ -f misc/50-cm108-ptt.rules ]; then \
 		cp misc/50-cm108-ptt.rules /etc/udev/rules.d/ 2>/dev/null || \
 		echo "Note: Run 'sudo cp misc/50-cm108-ptt.rules /etc/udev/rules.d/' for CM108 udev rules"; \
+	fi
+endif
+ifneq ($(UNAME_S),Darwin)
+	@if [ -f misc/60-gpio-ptt.rules ]; then \
+		cp misc/60-gpio-ptt.rules /etc/udev/rules.d/ 2>/dev/null || \
+		echo "Note: Run 'sudo cp misc/60-gpio-ptt.rules /etc/udev/rules.d/' for GPIO PTT udev rules"; \
 	fi
 endif
 

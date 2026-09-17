@@ -146,12 +146,18 @@ private:
         FIELD_AUDIO_OUTPUT,
         FIELD_TX_LEVEL,
         FIELD_PTT_TYPE,
+        FIELD_HAMLIB_INFO,
         FIELD_VOX_FREQ,
         FIELD_VOX_LEAD,
         FIELD_VOX_TAIL,
         FIELD_COM_PORT,
         FIELD_COM_LINE,
         FIELD_COM_INVERT,
+#ifdef WITH_GPIO_PTT
+        FIELD_GPIO_CHIP,
+        FIELD_GPIO_LINE,
+        FIELD_GPIO_INVERT,
+#endif
         FIELD_HAMLIB_MODEL,
         FIELD_HAMLIB_DEVICE,
         FIELD_HAMLIB_BAUD,
@@ -179,10 +185,24 @@ private:
         RIG_FIELD_COUNT
     };
 
-    bool rig_ui() const {
+    bool hamlib_info_field() const {
 #ifdef WITH_HAMLIB
-        if (state_.ptt_type_index == 5) return true;
+        return state_.ptt_type_index != 5 && state_.ptt_type_index != 1;
+#else
+        return false;
 #endif
+    }
+
+    bool hamlib_fields() const {
+#ifdef WITH_HAMLIB
+        return state_.ptt_type_index == 5 || (state_.hamlib_info && hamlib_info_field());
+#else
+        return false;
+#endif
+    }
+
+    bool rig_ui() const {
+        if (hamlib_fields()) return true;
         return state_.ptt_type_index == 1;
     }
 
@@ -465,6 +485,10 @@ private:
 
                         show_com_port_dialog();
 
+#ifdef WITH_GPIO_PTT
+                    } else if (current_field_ == FIELD_GPIO_CHIP || current_field_ == FIELD_GPIO_LINE) {
+                        edit_text_field(current_field_);
+#endif
                     } else if (current_field_ == FIELD_PTT_TYPE) {
 
                         show_ptt_type_dialog();
@@ -764,6 +788,12 @@ private:
             max_len = std::max(20, std::min(40, getmaxx(stdscr) / 2 - 2 - col - 1));
         } else if (field == FIELD_COM_PORT) {
             max_len = 20;
+#ifdef WITH_GPIO_PTT
+        } else if (field == FIELD_GPIO_CHIP) {
+            max_len = 20;
+        } else if (field == FIELD_GPIO_LINE) {
+            max_len = 3;
+#endif
 #ifdef WITH_CM108
         } else if (field == FIELD_CM108_GPIO) {
             max_len = 1;
@@ -807,6 +837,19 @@ private:
                 state_.com_port = buf;
                 state_.add_log("(!) COM port changed, restart required");
                 apply_settings();
+#ifdef WITH_GPIO_PTT
+            } else if (field == FIELD_GPIO_CHIP) {
+                state_.gpio_chip = buf;
+                state_.add_log("(!) GPIO chip changed, restart required");
+                apply_settings();
+            } else if (field == FIELD_GPIO_LINE) {
+                int line = atoi(buf);
+                if (line >= 0 && line < 512) {
+                    state_.gpio_line = line;
+                    state_.add_log("(!) GPIO line changed, restart required");
+                    apply_settings();
+                }
+#endif
 #ifdef WITH_CM108
             } else if (field == FIELD_CM108_GPIO) {
                 try {
@@ -1032,10 +1075,17 @@ private:
                 return true;
             }
         }
-        if (state_.ptt_type_index != 5) {
+#ifdef WITH_GPIO_PTT
+        if (state_.ptt_type_index != 6) {
+            if (field == FIELD_GPIO_CHIP || field == FIELD_GPIO_LINE || field == FIELD_GPIO_INVERT)
+                return true;
+        }
+#endif
+        if (!hamlib_fields()) {
             if (field == FIELD_HAMLIB_MODEL || field == FIELD_HAMLIB_DEVICE || field == FIELD_HAMLIB_BAUD)
                 return true;
         }
+        if (field == FIELD_HAMLIB_INFO && !hamlib_info_field()) return true;
 #ifdef WITH_CM108
         if (state_.ptt_type_index != 4) {  // not CM108
             if (field == FIELD_CM108_GPIO || field == FIELD_CM108_DEVICE) {
@@ -1172,6 +1222,10 @@ private:
         row++;
         if (field == FIELD_PTT_TYPE) return row;
         row++;
+        if (hamlib_info_field()) {
+            if (field == FIELD_HAMLIB_INFO) return row;
+            row++;
+        }
         if (state_.ptt_type_index == 2) {
             if (field == FIELD_VOX_FREQ) return row;
             row++;
@@ -1188,7 +1242,17 @@ private:
             if (field == FIELD_COM_INVERT) return row;
             row++;
         }
-        if (state_.ptt_type_index == 5) {
+#ifdef WITH_GPIO_PTT
+        if (state_.ptt_type_index == 6) {
+            if (field == FIELD_GPIO_CHIP) return row;
+            row++;
+            if (field == FIELD_GPIO_LINE) return row;
+            row++;
+            if (field == FIELD_GPIO_INVERT) return row;
+            row++;
+        }
+#endif
+        if (hamlib_fields()) {
             if (field == FIELD_HAMLIB_MODEL) return row;
             row++;
             if (field == FIELD_HAMLIB_DEVICE) return row;
@@ -1386,6 +1450,11 @@ private:
                 break;
             case FIELD_PTT_TYPE:
                 break;
+            case FIELD_HAMLIB_INFO:
+                state_.hamlib_info = !state_.hamlib_info;
+                state_.add_log(state_.hamlib_info ? "Rig info via Hamlib (restart to apply)"
+                                                  : "Rig info disabled (restart to apply)");
+                break;
             case FIELD_VOX_FREQ:
                 state_.vox_tone_freq += delta * 100;
                 state_.vox_tone_freq = std::max(300, std::min(2500, state_.vox_tone_freq));
@@ -1409,6 +1478,16 @@ private:
             }
             case FIELD_COM_PORT:
                 break;
+#ifdef WITH_GPIO_PTT
+            case FIELD_GPIO_CHIP:
+                break;
+            case FIELD_GPIO_LINE:
+                state_.gpio_line = std::max(0, std::min(511, state_.gpio_line + delta));
+                break;
+            case FIELD_GPIO_INVERT:
+                state_.gpio_active_low = !state_.gpio_active_low;
+                break;
+#endif
             case FIELD_COM_LINE:
                 state_.com_ptt_line = (state_.com_ptt_line + delta + 3) % 3;
                 break;
@@ -1574,6 +1653,7 @@ private:
             "COM    - Serial port DTR/RTS",
             "CM108  - USB HID GPIO",
             "HAMLIB - Hamlib direct (serial or network rig)",
+            "GPIO   - Linux gpiochip line",
         };
         std::vector<int> items = {0, 1, 2, 3};
 #ifdef WITH_CM108
@@ -1581,6 +1661,9 @@ private:
 #endif
 #ifdef WITH_HAMLIB
         items.push_back(5);
+#endif
+#ifdef WITH_GPIO_PTT
+        items.push_back(6);
 #endif
         int count = (int)items.size();
         int selection = 0;
@@ -3457,7 +3540,8 @@ private:
             draw_field(dy, c1, c2, "PTT", FIELD_PTT_TYPE,
                        PTT_TYPE_OPTIONS[state_.ptt_type_index], true);
             bool ptt_err = state_.ptt_failed.load() ||
-                           (rig_ui() && !state_.rigctl_connected.load());
+                           ((state_.ptt_type_index == 1 || state_.ptt_type_index == 5) &&
+                            !state_.rigctl_connected.load());
             if (ptt_err) {
                 if (current_field_ != FIELD_PTT_TYPE) {
                     attron(COLOR_PAIR(2) | A_BOLD);
@@ -3470,6 +3554,12 @@ private:
             }
         }
         row++;
+        if (hamlib_info_field()) {
+            dy = visible_y(row);
+            if (dy >= 0) draw_selector_field(dy, c1, c2, "Rig Info", FIELD_HAMLIB_INFO,
+                                             state_.hamlib_info ? "HAMLIB" : "NONE");
+            row++;
+        }
         
         if (state_.ptt_type_index == 2) {  // VOX
             dy = visible_y(row);
@@ -3529,7 +3619,25 @@ private:
             }
             row++;
         }
-        if (state_.ptt_type_index == 5) {
+#ifdef WITH_GPIO_PTT
+        if (state_.ptt_type_index == 6) {
+            dy = visible_y(row);
+            if (dy >= 0) {
+                std::string chip = state_.gpio_chip;
+                if (chip.length() > 14) chip = chip.substr(0, 13) + "~";
+                draw_field(dy, c1, c2, "GPIO Chip", FIELD_GPIO_CHIP, chip, true);
+            }
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) draw_field(dy, c1, c2, "GPIO Line", FIELD_GPIO_LINE, std::to_string(state_.gpio_line), true);
+            row++;
+            dy = visible_y(row);
+            if (dy >= 0) draw_selector_field(dy, c1, c2, "Polarity", FIELD_GPIO_INVERT,
+                                             state_.gpio_active_low ? "ACTIVE LOW" : "ACTIVE HIGH");
+            row++;
+        }
+#endif
+        if (hamlib_fields()) {
             dy = visible_y(row);
             if (dy >= 0) {
                 std::string m = state_.hamlib_model > 0 ? hamlib_model_label(state_.hamlib_model) : "select";

@@ -634,13 +634,104 @@ jobs:
             modem73_*.pkg.tar.zst.sha256
             modem73_*.pkg.tar.zst.sha512
 
+  build-macos:
+    needs: prep
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-arm64
+            runner: macos-15
+            arch: arm64
+            arch_flags: ""
+          - id: macos-x86_64
+            runner: macos-15-intel
+            arch: x86_64
+            arch_flags: "-march=x86-64-v2"
+
+    steps:
+      - name: Checkout modem73
+        uses: actions/checkout@v7
+        with:
+          path: m73
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install pkgconf ncurses hidapi hamlib dylibbundler
+
+      - name: Build
+        working-directory: m73
+        run: |
+          make ARCHFLAGS="${{ matrix.arch_flags }}" \
+               VERSION="${{ needs.prep.outputs.version }}" \
+               -j"$(sysctl -n hw.ncpu)"
+
+      - name: Verify CM108 support is compiled in
+        working-directory: m73
+        run: |
+          otool -L modem73 | grep -q hidapi || {
+            echo "::error::binary is not linked against hidapi - CM108 PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Verify Hamlib support is compiled in
+        working-directory: m73
+        run: |
+          otool -L modem73 | grep -q hamlib || {
+            echo "::error::binary is not linked against hamlib - Hamlib PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Bundle libraries
+        working-directory: m73
+        run: |
+          mkdir -p dist/modem73/libs
+          cp modem73 dist/modem73/
+          cp README.md QUICKSTART.md CONTROL_PORT.md LICENSE dist/modem73/
+          dylibbundler -od -b -x dist/modem73/modem73 -d dist/modem73/libs/ -p @executable_path/libs/
+          codesign --force -s - dist/modem73/libs/*.dylib dist/modem73/modem73
+          if otool -L dist/modem73/modem73 dist/modem73/libs/*.dylib | grep -E "/opt/homebrew|/usr/local/(Cellar|opt|lib)"; then
+            echo "::error::a Homebrew library was not bundled"
+            exit 1
+          fi
+
+      - name: Smoke test
+        working-directory: m73
+        run: |
+          ./dist/modem73/modem73 --help > help.txt 2>&1 || true
+          grep -q "hamlib" help.txt || { echo "::error::hamlib missing from --help"; cat help.txt; exit 1; }
+          grep -q "cm108" help.txt || { echo "::error::cm108 missing from --help"; cat help.txt; exit 1; }
+
+      - name: Package
+        working-directory: m73
+        run: |
+          V="${{ needs.prep.outputs.version }}"
+          tar -C dist -czf "../modem73_${V}_${{ matrix.id }}.tar.gz" modem73
+          cd ..
+          for f in modem73_*.tar.gz; do
+            shasum -a 256 "$f" | tee "${f}.sha256"
+            shasum -a 512 "$f" | tee "${f}.sha512"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-${{ matrix.id }}
+          path: |
+            modem73_*.tar.gz
+            modem73_*.tar.gz.sha256
+            modem73_*.tar.gz.sha512
+
   release:
-    needs: [prep, build-deb, build-rpm, build-arch]
+    needs: [prep, build-deb, build-rpm, build-arch, build-macos]
     if: |
       !cancelled() &&
       needs.build-deb.result == 'success' &&
       needs.build-rpm.result == 'success' &&
       needs.build-arch.result == 'success' &&
+      needs.build-macos.result == 'success' &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'))
     runs-on: ubuntu-24.04
@@ -670,5 +761,8 @@ jobs:
             dist/modem73_*.pkg.tar.zst
             dist/modem73_*.pkg.tar.zst.sha256
             dist/modem73_*.pkg.tar.zst.sha512
+            dist/modem73_*.tar.gz
+            dist/modem73_*.tar.gz.sha256
+            dist/modem73_*.tar.gz.sha512
           generate_release_notes: true
           fail_on_unmatched_files: false

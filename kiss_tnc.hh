@@ -35,17 +35,27 @@ namespace KISS {
 }
 
 
+#if defined(__linux__) && !defined(__ANDROID__)
+#if __has_include(<linux/gpio.h>)
+#include <linux/gpio.h>
+#endif
+#ifdef GPIO_V2_GET_LINE_IOCTL
+#define WITH_GPIO_PTT 1
+#endif
+#endif
+
 enum class PTTType {
     NONE = 0,
     RIGCTL = 1,
     VOX = 2,
     COM = 3,
     CM108 = 4,
-    HAMLIB = 5
+    HAMLIB = 5,
+    GPIO = 6
 };
 
 const std::vector<std::string> PTT_TYPE_OPTIONS = {
-    "NONE", "RIGCTL", "VOX", "COM", "CM108", "HAMLIB"
+    "NONE", "RIGCTL", "VOX", "COM", "CM108", "HAMLIB", "GPIO"
 };
 
 inline int ptt_type_available(int v) {
@@ -54,6 +64,9 @@ inline int ptt_type_available(int v) {
 #endif
 #ifndef WITH_CM108
     if (v == static_cast<int>(PTTType::CM108)) return static_cast<int>(PTTType::NONE);
+#endif
+#ifndef WITH_GPIO_PTT
+    if (v == static_cast<int>(PTTType::GPIO)) return static_cast<int>(PTTType::NONE);
 #endif
     return v;
 }
@@ -95,6 +108,7 @@ struct TNCConfig {
     int hamlib_model = 0;
     std::string hamlib_device;
     int hamlib_baud = 0;
+    bool hamlib_info = false;
     std::string rigctl_host = "localhost";
     int rigctl_port = 4532;
     
@@ -108,6 +122,9 @@ struct TNCConfig {
     int com_ptt_line = 1;        // 0=DTR, 1=RTS, 2=BOTH
     bool com_invert_dtr = false;
     bool com_invert_rts = false;
+    std::string gpio_chip = "gpiochip0";
+    int gpio_line = 17;
+    bool gpio_active_low = false;
 
 #ifdef WITH_CM108
     // CM108 PTT settings
@@ -145,6 +162,7 @@ struct TNCConfig {
     bool mfsk_rx_enabled = true;
     bool ofdm_rx_enabled = true;
     bool robust_rx_enabled = true;
+    bool robust_enhanced_retry = false;
 
     // Fragmentation settings
     bool fragmentation_enabled = false;

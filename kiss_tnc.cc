@@ -51,6 +51,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
         else if (!strcmp(key, "hamlib_model") && take(key)) config.hamlib_model = atoi(value);
         else if (!strcmp(key, "hamlib_device") && take(key)) config.hamlib_device = value;
         else if (!strcmp(key, "hamlib_baud") && take(key)) config.hamlib_baud = atoi(value);
+        else if (!strcmp(key, "hamlib_info") && take(key)) config.hamlib_info = atoi(value) != 0;
         else if (!strcmp(key, "modulation") && take(key)) {
             int idx = atoi(value);
             if (idx >= 0 && idx < N_MOD) config.modulation = MOD_OPTS[idx];
@@ -127,6 +128,12 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
         }
         else if (!strcmp(key, "com_invert_dtr") && take(key)) config.com_invert_dtr = atoi(value) != 0;
         else if (!strcmp(key, "com_invert_rts") && take(key)) config.com_invert_rts = atoi(value) != 0;
+        else if (!strcmp(key, "gpio_chip") && take(key)) config.gpio_chip = value;
+        else if (!strcmp(key, "gpio_line") && take(key)) {
+            int v = atoi(value);
+            if (v >= 0 && v < 512) config.gpio_line = v;
+        }
+        else if (!strcmp(key, "gpio_active_low") && take(key)) config.gpio_active_low = atoi(value) != 0;
 #ifdef WITH_CM108
         else if (!strcmp(key, "cm108_gpio") && take(key)) config.cm108_gpio = atoi(value);
         else if (!strcmp(key, "cm108_device") && take(key)) config.cm108_device = value;
@@ -229,6 +236,8 @@ void print_help(const char* prog) {
               << "      --no-postamble      Do not send a postamble (default)\n"
               << "      --mfsk-mode MODE    MFSK-8, MFSK-16, MFSK-32 or MFSK-32R\n"
               << "                          (implies --modem mfsk)\n"
+              << "      --robust-enhanced-retry     Extra ROBUST RX retries (EXPERIMENTAL, more CPU)\n"
+              << "      --no-robust-enhanced-retry  Disable extra ROBUST RX retries (default)\n"
               << "      --robust-mode MODE  RDM-1200 RDM-800 RDM-600 RDM-300 RDMN-300 RDMN-150\n"
               << "                          suffix S selects short frames (e.g. RDM-600S),\n"
               << "                          RDM-QB is the 32 B micro burst\n"
@@ -249,6 +258,9 @@ void print_help(const char* prog) {
 #ifdef WITH_HAMLIB
               << ", hamlib"
 #endif
+#ifdef WITH_GPIO_PTT
+              << ", gpio"
+#endif
               << " (default: none)\n"
               << "      --rigctl HOST:PORT  Rigctld address (default: localhost:4532,\n"
               << "                          implies --ptt rigctl)\n"
@@ -257,9 +269,15 @@ void print_help(const char* prog) {
               << "      --hamlib-model N    Hamlib rig model number for HAMLIB PTT\n"
               << "      --hamlib-device DEV Serial port or host:port for HAMLIB PTT\n"
               << "      --hamlib-baud BAUD  Serial speed for HAMLIB PTT (0 = rig default)\n"
+              << "      --hamlib-info       Rig status via Hamlib while PTT uses another type\n"
 #endif
               << "      --com-line LINE     COM PTT line: dtr, rts, both, -dtr, -rts, -both\n"
               << "                          (prefix '-' inverts polarity; default: rts)\n"
+#ifdef WITH_GPIO_PTT
+              << "      --gpio-chip DEV     GPIO chip for GPIO PTT (default: gpiochip0)\n"
+              << "      --gpio-line N       GPIO line offset for GPIO PTT (default: 17)\n"
+              << "      --gpio-active-low   Drive the GPIO PTT line active-low\n"
+#endif
               << "      --vox-freq HZ       VOX tone frequency (default: 1200)\n"
               << "      --vox-lead MS       VOX lead time in ms (default: 550)\n"
               << "      --vox-tail MS       VOX tail time in ms (default: 500)\n"
@@ -486,6 +504,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--hamlib-baud" && i + 1 < argc) {
             config.hamlib_baud = atoi(argv[++i]);
             cli_set.insert("hamlib_baud");
+        } else if (arg == "--hamlib-info") {
+            config.hamlib_info = true;
+            cli_set.insert("hamlib_info");
         } else if (arg == "--com-port" && i + 1 < argc) {
             config.com_port = argv[++i];
             cli_set.insert("com_port");
@@ -523,6 +544,15 @@ int main(int argc, char** argv) {
                 cli_set.insert("com_invert_dtr");
                 cli_set.insert("com_invert_rts");
             }
+        } else if (arg == "--gpio-chip" && i + 1 < argc) {
+            config.gpio_chip = argv[++i];
+            cli_set.insert("gpio_chip");
+        } else if (arg == "--gpio-line" && i + 1 < argc) {
+            config.gpio_line = atoi(argv[++i]);
+            cli_set.insert("gpio_line");
+        } else if (arg == "--gpio-active-low") {
+            config.gpio_active_low = true;
+            cli_set.insert("gpio_active_low");
         } else if (arg == "--ptt" && i + 1 < argc) {
             cli_set.insert("ptt_type");
             std::string ptt_type = argv[++i];
@@ -536,10 +566,16 @@ int main(int argc, char** argv) {
 #ifdef WITH_HAMLIB
             else if (ptt_type == "hamlib") config.ptt_type = PTTType::HAMLIB;
 #endif
+#ifdef WITH_GPIO_PTT
+            else if (ptt_type == "gpio") config.ptt_type = PTTType::GPIO;
+#endif
             else {
                 std::cerr << "Unknown PTT type: " << ptt_type << " (use none, rigctl, vox, com"
 #ifdef WITH_CM108
                           << ", cm108"
+#endif
+#ifdef WITH_GPIO_PTT
+                          << ", gpio"
 #endif
 #ifdef WITH_HAMLIB
                           << ", hamlib"
@@ -579,6 +615,12 @@ int main(int argc, char** argv) {
         } else if (arg == "--no-ofdm-rx") {
             config.ofdm_rx_enabled = false;
             cli_set.insert("ofdm_rx_enabled");
+        } else if (arg == "--robust-enhanced-retry") {
+            config.robust_enhanced_retry = true;
+            cli_set.insert("robust_enhanced_retry");
+        } else if (arg == "--no-robust-enhanced-retry") {
+            config.robust_enhanced_retry = false;
+            cli_set.insert("robust_enhanced_retry");
         } else if (arg == "--no-robust-rx") {
             config.robust_rx_enabled = false;
             cli_set.insert("robust_rx_enabled");
@@ -863,12 +905,20 @@ int main(int argc, char** argv) {
                     config.hamlib_device = ui_state.hamlib_device;
                 if (!cli_set.count("hamlib_baud"))
                     config.hamlib_baud = ui_state.hamlib_baud;
+                if (!cli_set.count("hamlib_info"))
+                    config.hamlib_info = ui_state.hamlib_info;
                 if (!cli_set.count("com_ptt_line"))
                     config.com_ptt_line = ui_state.com_ptt_line;
                 if (!cli_set.count("com_invert_dtr"))
                     config.com_invert_dtr = ui_state.com_invert_dtr;
                 if (!cli_set.count("com_invert_rts"))
                     config.com_invert_rts = ui_state.com_invert_rts;
+                if (!cli_set.count("gpio_chip"))
+                    config.gpio_chip = ui_state.gpio_chip;
+                if (!cli_set.count("gpio_line"))
+                    config.gpio_line = ui_state.gpio_line;
+                if (!cli_set.count("gpio_active_low"))
+                    config.gpio_active_low = ui_state.gpio_active_low;
 
 #ifdef WITH_CM108
                 // CM108 PTT settings
@@ -949,9 +999,13 @@ int main(int argc, char** argv) {
                 ui_state.hamlib_model = config.hamlib_model;
                 ui_state.hamlib_device = config.hamlib_device;
                 ui_state.hamlib_baud = config.hamlib_baud;
+        ui_state.hamlib_info = config.hamlib_info;
                 ui_state.com_ptt_line = config.com_ptt_line;
                 ui_state.com_invert_dtr = config.com_invert_dtr;
                 ui_state.com_invert_rts = config.com_invert_rts;
+                ui_state.gpio_chip = config.gpio_chip;
+                ui_state.gpio_line = config.gpio_line;
+                ui_state.gpio_active_low = config.gpio_active_low;
 #ifdef WITH_CM108
                 // CM108 PTT settings
                 ui_state.cm108_gpio = config.cm108_gpio;
@@ -1008,9 +1062,13 @@ int main(int argc, char** argv) {
         ui_state.hamlib_model = config.hamlib_model;
         ui_state.hamlib_device = config.hamlib_device;
         ui_state.hamlib_baud = config.hamlib_baud;
+        ui_state.hamlib_info = config.hamlib_info;
         ui_state.com_ptt_line = config.com_ptt_line;
         ui_state.com_invert_dtr = config.com_invert_dtr;
         ui_state.com_invert_rts = config.com_invert_rts;
+        ui_state.gpio_chip = config.gpio_chip;
+        ui_state.gpio_line = config.gpio_line;
+        ui_state.gpio_active_low = config.gpio_active_low;
 #ifdef WITH_CM108
         ui_state.cm108_gpio = config.cm108_gpio;
         ui_state.cm108_device = config.cm108_device;
@@ -1454,9 +1512,13 @@ int main(int argc, char** argv) {
                 new_config.hamlib_model = state.hamlib_model;
                 new_config.hamlib_device = state.hamlib_device;
                 new_config.hamlib_baud = state.hamlib_baud;
+                new_config.hamlib_info = state.hamlib_info;
                 new_config.com_ptt_line = state.com_ptt_line;
                 new_config.com_invert_dtr = state.com_invert_dtr;
                 new_config.com_invert_rts = state.com_invert_rts;
+                new_config.gpio_chip = state.gpio_chip;
+                new_config.gpio_line = state.gpio_line;
+                new_config.gpio_active_low = state.gpio_active_low;
 
                 tnc.update_config(new_config);
                 if (ctrl) ctrl->notify_config_changed();

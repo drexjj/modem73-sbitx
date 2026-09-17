@@ -242,9 +242,13 @@ struct TNCUIState {
     int hamlib_model = 0;
     std::string hamlib_device;
     int hamlib_baud = 0;
+    bool hamlib_info = false;
     int com_ptt_line = 1;       // 0=DTR, 1=RTS, 2=BOTH
     bool com_invert_dtr = false;
     bool com_invert_rts = false;
+    std::string gpio_chip = "gpiochip0";
+    int gpio_line = 17;
+    bool gpio_active_low = false;
     
 #ifdef WITH_CM108
     // CM108 PTT settings (PTT type 4)
@@ -771,9 +775,13 @@ struct TNCUIState {
         fprintf(f, "hamlib_model=%d\n", hamlib_model);
         fprintf(f, "hamlib_device=%s\n", hamlib_device.c_str());
         fprintf(f, "hamlib_baud=%d\n", hamlib_baud);
+        fprintf(f, "hamlib_info=%d\n", hamlib_info ? 1 : 0);
         fprintf(f, "com_ptt_line=%d\n", com_ptt_line);
         fprintf(f, "com_invert_dtr=%d\n", com_invert_dtr ? 1 : 0);
         fprintf(f, "com_invert_rts=%d\n", com_invert_rts ? 1 : 0);
+        fprintf(f, "gpio_chip=%s\n", gpio_chip.c_str());
+        fprintf(f, "gpio_line=%d\n", gpio_line);
+        fprintf(f, "gpio_active_low=%d\n", gpio_active_low ? 1 : 0);
 #ifdef WITH_CM108
         fprintf(f, "# CM108 PTT\n");
         fprintf(f, "cm108_gpio=%d\n", cm108_gpio);
@@ -904,12 +912,19 @@ struct TNCUIState {
                 else if (strcmp(key, "hamlib_model") == 0) hamlib_model = atoi(value);
                 else if (strcmp(key, "hamlib_device") == 0) hamlib_device = value;
                 else if (strcmp(key, "hamlib_baud") == 0) hamlib_baud = atoi(value);
+                else if (strcmp(key, "hamlib_info") == 0) hamlib_info = atoi(value) != 0;
                 else if (strcmp(key, "com_ptt_line") == 0) {
                     int v = atoi(value);
                     if (v >= 0 && v < (int)PTT_LINE_OPTIONS.size()) com_ptt_line = v;
                 }
                 else if (strcmp(key, "com_invert_dtr") == 0) com_invert_dtr = atoi(value) != 0;
                 else if (strcmp(key, "com_invert_rts") == 0) com_invert_rts = atoi(value) != 0;
+                else if (strcmp(key, "gpio_chip") == 0) gpio_chip = value;
+                else if (strcmp(key, "gpio_line") == 0) {
+                    int v = atoi(value);
+                    if (v >= 0 && v < 512) gpio_line = v;
+                }
+                else if (strcmp(key, "gpio_active_low") == 0) gpio_active_low = atoi(value) != 0;
 #ifdef WITH_CM108
                 else if (strcmp(key, "cm108_gpio") == 0) {
                     int v = atoi(value);

@@ -68,7 +68,7 @@ fi
 cd "$PARENT_DIR"
 
 if [ ! -d "modem73" ]; then
-    git clone "https://github.com/drexjj/modem73-sbitx.git"
+    git clone "https://github.com/drexjj/modem73-sbitx.git" modem73
 fi
 
 cd modem73
